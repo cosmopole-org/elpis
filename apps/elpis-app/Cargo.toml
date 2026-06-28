@@ -1,0 +1,20 @@
+[package]
+name = "elpis-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The Elpis host application: instantiates an Elpis sandbox, loads a Miniapp written in JS, and runs it on the elpian-vm driving a Blinc UI. Runs headless by default (boot, render, diff, drive events on the CPU); build with --features blinc to open a real Blinc window."
+
+[[bin]]
+name = "elpis"
+path = "src/main.rs"
+
+[features]
+default = []
+# Open a real Blinc (wgpu) window instead of the headless driver.
+blinc = ["elpis-blinc/blinc-backend"]
+
+[dependencies]
+elpis-blinc = { workspace = true }
+serde_json = { workspace = true }

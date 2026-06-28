@@ -1,0 +1,13 @@
+[package]
+name = "elpis-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The Elpis sandbox host: instantiates an elpian-vm, runs a Miniapp written in JS, and bridges its askHost UI calls (ui.render, ui.patch, anim.*, canvas.*, scene3d.*, theme.*, router.*, media.*, storage.*, host.*) to a pluggable UI backend, maintaining a retained widget tree and routing UI events back into the VM."
+
+[dependencies]
+elpian-vm = { workspace = true }
+elpis-protocol = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

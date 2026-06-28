@@ -1,0 +1,39 @@
+[package]
+name = "elpis-blinc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Blinc UI backend for the Elpis sandbox: lowers the elpis-protocol widget tree to the Blinc UI framework's builder API and reconciles it in place from the host's patch script. The Node->Blinc lowering is always compiled and unit-tested; the actual Blinc/wgpu construction and windowed run loop are behind the `blinc-backend` feature so the core workspace builds without a GPU stack."
+
+[features]
+default = []
+# Pull in the real Blinc UI framework (wgpu, windowing, text, svg, animation,
+# theming, router) and build the live GPU backend + windowed run loop.
+blinc-backend = [
+    "dep:blinc_app",
+    "dep:blinc_core",
+    "dep:blinc_layout",
+    "dep:blinc_animation",
+    "dep:blinc_theme",
+    "dep:blinc_router",
+    "dep:blinc_svg",
+    "dep:blinc_image",
+    "dep:blinc_text",
+]
+
+[dependencies]
+elpis-protocol = { workspace = true }
+elpis-host = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+blinc_app = { workspace = true, optional = true }
+blinc_core = { workspace = true, optional = true }
+blinc_layout = { workspace = true, optional = true }
+blinc_animation = { workspace = true, optional = true }
+blinc_theme = { workspace = true, optional = true }
+blinc_router = { workspace = true, optional = true }
+blinc_svg = { workspace = true, optional = true }
+blinc_image = { workspace = true, optional = true }
+blinc_text = { workspace = true, optional = true }

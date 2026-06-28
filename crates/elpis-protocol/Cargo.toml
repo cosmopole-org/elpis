@@ -1,0 +1,11 @@
+[package]
+name = "elpis-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Wire protocol for the Elpis Miniapp sandbox: a serializable widget DSL tree covering the full Blinc UI surface (layout, 2D, text, image, svg, canvas, 3D/game, animation, theming) plus a keyed tree-diff that turns two trees into a minimal patch list, and the host-call envelope shared with the elpian-vm."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

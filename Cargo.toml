@@ -38,7 +38,12 @@ elpis-blinc = { path = "crates/elpis-blinc" }
 
 # Blinc UI framework (https://github.com/project-blinc/Blinc). Pulled in only
 # by `elpis-blinc` when its `blinc-backend` feature is enabled.
-blinc_app = "0.5"
+#
+# `default-features = false` drops the desktop convenience surfaces (file
+# dialogs, tray, notifications, hotkeys) whose gtk/dbus transitive trees need
+# system libraries (pango, gdk-pixbuf) that aren't present in minimal/CI
+# environments. We only need the lean windowed runtime.
+blinc_app = { version = "0.5", default-features = false, features = ["windowed"] }
 blinc_core = "0.5"
 blinc_layout = "0.5"
 blinc_animation = "0.5"

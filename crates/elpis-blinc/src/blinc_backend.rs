@@ -25,7 +25,7 @@ use blinc_core::Color as BColor;
 use blinc_layout::div::div;
 use blinc_layout::prelude::*;
 use blinc_layout::text::text as btext;
-use blinc_platform::WindowConfig;
+use blinc_app::WindowConfig;
 
 use elpis_host::{Sandbox, SurfaceInfo, UiBackend, UiEvent};
 use elpis_protocol::style::{Align, Brush, Color, Display, FlexDirection, Justify};
@@ -199,11 +199,11 @@ fn length_px(l: elpis_protocol::style::Length) -> Option<f32> {
 
 fn blinc_core_shadow(s: &elpis_protocol::style::Shadow) -> blinc_core::Shadow {
     blinc_core::Shadow {
-        offset: blinc_core::Point { x: s.offset[0], y: s.offset[1] },
+        offset_x: s.offset[0],
+        offset_y: s.offset[1],
         blur: s.blur,
         spread: s.spread,
         color: bcolor(s.color),
-        ..Default::default()
     }
 }
 
@@ -233,7 +233,7 @@ pub fn build(dom: &BlincDom, shared: &BlincShared) -> Boxed {
         _ => {
             let mut d = apply_style(div(), &dom.style);
             for child in &dom.children {
-                d = d.child_boxed(build(child, shared));
+                d = d.child_box(build(child, shared));
             }
             d = wire_events(d, dom, shared);
             Box::new(d)
@@ -247,7 +247,7 @@ fn wire_events(mut d: Div, dom: &BlincDom, shared: &BlincShared) -> Div {
     if let Some(handler) = dom.events.get("click") {
         let handler = handler.clone();
         let events = shared.events.clone();
-        d = d.on_click(move || {
+        d = d.on_click(move |_| {
             events.borrow_mut().push(UiEvent::click(handler.clone()));
         });
     }
@@ -287,12 +287,19 @@ pub fn run_windowed(
                 let _ = sb.dispatch_event(&ev);
             }
         }
-        // 2. Build the current tree.
+        // 2. Build the current tree. The run closure must return a concrete
+        //    `ElementBuilder`, so wrap the dynamic (boxed) root in a full-window
+        //    Div via `child_box`.
         let root = shared.dom.borrow();
-        match root.as_ref() {
+        let inner: Boxed = match root.as_ref() {
             Some(dom) => build(dom, &shared),
-            None => Box::new(div().w(ctx.width).h(ctx.height).bg(BColor::rgba(0.05, 0.05, 0.07, 1.0))),
-        }
+            None => Box::new(div()),
+        };
+        div()
+            .w(ctx.width)
+            .h(ctx.height)
+            .bg(BColor::rgba(0.05, 0.05, 0.07, 1.0))
+            .child_box(inner)
     })
     .map_err(|e| format!("blinc run failed: {e:?}"))
 }

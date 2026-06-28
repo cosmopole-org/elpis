@@ -19,15 +19,21 @@
 
 use std::process::ExitCode;
 
-use elpis_blinc::protocol::node::{NodeKind, TextSpec};
-use elpis_blinc::{Node, Sandbox, SandboxConfig, SurfaceInfo};
+use elpis_blinc::{Sandbox, SandboxConfig, SurfaceInfo};
+#[cfg(not(feature = "blinc"))]
+use elpis_blinc::{
+    protocol::node::{NodeKind, TextSpec},
+    Node,
+};
 
 /// A default Miniapp bundled into the binary, so `elpis` runs with no args.
 const DEFAULT_MINIAPP: &str = include_str!("../../../miniapps/showcase/app.js");
 
 struct Args {
     path: Option<String>,
+    #[cfg_attr(feature = "blinc", allow(dead_code))]
     events: Vec<String>,
+    #[cfg_attr(feature = "blinc", allow(dead_code))]
     ticks: u32,
 }
 
@@ -162,6 +168,7 @@ fn run_headless(config: SandboxConfig, name: &str, source: &str, args: &Args) ->
     ExitCode::SUCCESS
 }
 
+#[cfg(not(feature = "blinc"))]
 /// Pretty-print the retained widget tree as an indented outline.
 fn print_tree(sandbox: &Sandbox) {
     match sandbox.tree() {
@@ -170,6 +177,7 @@ fn print_tree(sandbox: &Sandbox) {
     }
 }
 
+#[cfg(not(feature = "blinc"))]
 fn print_node(node: &Node, depth: usize) {
     let indent = "  ".repeat(depth + 2);
     let mut line = format!("{indent}{}", node.type_tag());
@@ -189,6 +197,7 @@ fn print_node(node: &Node, depth: usize) {
     }
 }
 
+#[cfg(not(feature = "blinc"))]
 fn content_summary(kind: &NodeKind) -> Option<String> {
     match kind {
         NodeKind::Text(TextSpec { text, .. }) => Some(format!("\"{text}\"")),

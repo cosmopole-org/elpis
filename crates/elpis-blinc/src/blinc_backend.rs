@@ -2,17 +2,18 @@
 //!
 //! This is the thin interpreter promised by [`crate::lower`]: it walks a
 //! [`BlincDom`] and constructs the corresponding `blinc_layout` element tree,
-//! wiring events back into the host. It also provides [`run_windowed`], which
-//! opens a Blinc window and drives an [`elpis_host::Sandbox`] frame by frame.
+//! wiring events back into the host. It is **platform-agnostic** — the actual
+//! window/canvas/activity run loops live in the per-platform demo crates
+//! (`elpis-app` for desktop, `elpis-web` for wasm, `elpis-android` for Android),
+//! each of which supplies its own `blinc_app` platform feature and calls
+//! [`frame_closure`]. A desktop convenience [`run_windowed`] is provided here
+//! behind the `desktop` feature.
 //!
 //! Because Blinc rebuilds its declarative tree from the build closure every
 //! frame, the bridge keeps the latest lowered [`BlincDom`] in a shared cell:
 //! the host renders the guest's tree into the backend (which lowers + stores
 //! it), and the Blinc build closure reads that cell to construct widgets and
-//! pushes UI events into a shared queue the host drains on the next pump.
-//!
-//! The `blinc_*` crate APIs are pinned to the 0.5 line (see the workspace
-//! `Cargo.toml`); this module targets that builder surface.
+//! pushes UI events into a shared queue the host drains on the next frame.
 #![cfg(feature = "blinc-backend")]
 
 use std::cell::RefCell;
@@ -20,12 +21,11 @@ use std::rc::Rc;
 
 use serde_json::Value;
 
-use blinc_app::windowed::{WindowedApp, WindowedContext};
+use blinc_app::windowed::WindowedContext;
 use blinc_core::Color as BColor;
-use blinc_layout::div::div;
+use blinc_layout::div::{div, Div};
 use blinc_layout::prelude::*;
 use blinc_layout::text::text as btext;
-use blinc_app::WindowConfig;
 
 use elpis_host::{Sandbox, SurfaceInfo, UiBackend, UiEvent};
 use elpis_protocol::style::{Align, Brush, Color, Display, FlexDirection, Justify};
@@ -229,7 +229,7 @@ pub fn build(dom: &BlincDom, shared: &BlincShared) -> Boxed {
         }
         // Containers and every other family build a styled div with children;
         // the specialized widget builders (input, slider, dropdown, canvas,
-        // scene) are layered on in `build_children`/dedicated arms.
+        // scene) are layered on in dedicated arms as the bridge matures.
         _ => {
             let mut d = apply_style(div(), &dom.style);
             for child in &dom.children {
@@ -255,31 +255,22 @@ fn wire_events(mut d: Div, dom: &BlincDom, shared: &BlincShared) -> Div {
 }
 
 // ---------------------------------------------------------------------------
-// Windowed run loop.
+// The shared frame closure (used by every platform run loop).
 // ---------------------------------------------------------------------------
 
-/// Open a Blinc window and drive `sandbox` (already booted with a
-/// [`BlincBackend`] whose `shared` handle is passed here) frame by frame.
-pub fn run_windowed(
-    title: &str,
-    width: u32,
-    height: u32,
+/// Build the per-frame UI closure that every Blinc run loop drives.
+///
+/// On each frame it (1) delivers queued UI events to the guest — which
+/// re-renders into the backend, updating the shared `BlincDom` — and (2)
+/// constructs the current Blinc element tree. The returned closure has the
+/// exact `FnMut(&mut WindowedContext) -> impl ElementBuilder` shape that
+/// `WindowedApp::run`, `WebApp::run`, and `AndroidApp::run` all expect.
+pub fn frame_closure(
     sandbox: Sandbox,
     shared: BlincShared,
-) -> Result<(), String> {
-    let config = WindowConfig {
-        title: title.to_string(),
-        width,
-        height,
-        resizable: true,
-        ..Default::default()
-    };
-
+) -> impl FnMut(&mut WindowedContext) -> Div + 'static {
     let sandbox = Rc::new(RefCell::new(sandbox));
-
-    WindowedApp::run(config, move |ctx: &mut WindowedContext| {
-        // 1. Deliver any queued UI events to the guest (which re-renders into
-        //    the backend, updating the shared dom).
+    move |ctx: &mut WindowedContext| {
         let pending: Vec<UiEvent> = std::mem::take(&mut shared.events.borrow_mut());
         if !pending.is_empty() {
             let mut sb = sandbox.borrow_mut();
@@ -287,9 +278,6 @@ pub fn run_windowed(
                 let _ = sb.dispatch_event(&ev);
             }
         }
-        // 2. Build the current tree. The run closure must return a concrete
-        //    `ElementBuilder`, so wrap the dynamic (boxed) root in a full-window
-        //    Div via `child_box`.
         let root = shared.dom.borrow();
         let inner: Boxed = match root.as_ref() {
             Some(dom) => build(dom, &shared),
@@ -300,6 +288,32 @@ pub fn run_windowed(
             .h(ctx.height)
             .bg(BColor::rgba(0.05, 0.05, 0.07, 1.0))
             .child_box(inner)
-    })
-    .map_err(|e| format!("blinc run failed: {e:?}"))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Desktop convenience run loop.
+// ---------------------------------------------------------------------------
+
+/// Open a Blinc desktop window and drive `sandbox` (already booted with a
+/// [`BlincBackend`] whose `shared` handle is passed here) frame by frame.
+#[cfg(feature = "desktop")]
+pub fn run_windowed(
+    title: &str,
+    width: u32,
+    height: u32,
+    sandbox: Sandbox,
+    shared: BlincShared,
+) -> Result<(), String> {
+    use blinc_app::windowed::WindowedApp;
+    use blinc_app::WindowConfig;
+
+    let config = WindowConfig {
+        title: title.to_string(),
+        width,
+        height,
+        resizable: true,
+        ..Default::default()
+    };
+    WindowedApp::run(config, frame_closure(sandbox, shared)).map_err(|e| format!("blinc run failed: {e:?}"))
 }

@@ -1,0 +1,33 @@
+[package]
+name = "elpis-android"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Android build of the Elpis demo: runs the showcase Miniapp on the elpian-vm and renders it with Blinc's native (NativeActivity) WebGPU backend. Built into a .so with cargo-ndk and packaged into an APK by the Gradle project under android/."
+publish = false
+
+[lib]
+# `cdylib` for the Android NativeActivity .so; `rlib` so the workspace can
+# still build/check the (empty, off-Android) library on desktop CI.
+name = "elpis_android"
+crate-type = ["cdylib", "rlib"]
+
+# Android-only: a desktop/CI build links an empty cdylib (see the `#![cfg]`
+# gate in src/lib.rs), so `cargo build --workspace` never pulls the Android /
+# Blinc-android stack.
+[target.'cfg(target_os = "android")'.dependencies]
+elpis-host = { workspace = true }
+elpis-blinc = { workspace = true, features = ["blinc-backend"] }
+blinc_app = { workspace = true, default-features = false, features = ["android"] }
+blinc_platform_android = { workspace = true }
+android-activity = { version = "0.6", features = ["native-activity"] }
+android_logger = "0.14"
+log = "0.4"
+serde_json = { workspace = true }
+
+[package.metadata.android]
+package = "org.cosmopole.elpis"
+apk_label = "Elpis Demo"
+target_sdk_version = 35
+min_sdk_version = 24

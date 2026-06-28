@@ -1,0 +1,84 @@
+# Build the Elpis Android demo (the showcase Miniapp running on the elpian-vm,
+# rendered by Blinc's native WebGPU backend) into an APK and publish it to the
+# root of the repository as `elpis-demo.apk`.
+#
+# The Rust crate `apps/elpis-android` is compiled to an arm64-v8a `.so` with
+# `cargo ndk`, then the Gradle project in `apps/elpis-android/android` packages
+# it (NativeActivity) into a debug-signed, installable APK.
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+    # Don't retrigger on the commit that publishes the APK itself.
+    paths-ignore:
+      - 'elpis-demo.apk'
+  workflow_dispatch:
+
+# Needed to commit the built APK back to the repository root.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Rust (with Android target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Set up Android NDK
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Build the Rust .so (arm64-v8a)
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          cargo ndk -t arm64-v8a \
+            -o apps/elpis-android/android/app/src/main/jniLibs \
+            build --release -p elpis-android
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Assemble the APK
+        working-directory: apps/elpis-android/android
+        run: gradle assembleDebug --no-daemon
+
+      - name: Copy APK to repository root
+        run: |
+          cp apps/elpis-android/android/app/build/outputs/apk/debug/app-debug.apk elpis-demo.apk
+          ls -la elpis-demo.apk
+
+      - name: Publish APK to repository root
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore(ci): publish Android demo APK [skip ci]"
+          file_pattern: elpis-demo.apk
+
+      - name: Upload APK as a build artifact too
+        uses: actions/upload-artifact@v4
+        with:
+          name: elpis-demo-apk
+          path: elpis-demo.apk

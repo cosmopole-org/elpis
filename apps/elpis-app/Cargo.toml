@@ -13,7 +13,7 @@ path = "src/main.rs"
 [features]
 default = []
 # Open a real Blinc (wgpu) window instead of the headless driver.
-blinc = ["elpis-blinc/blinc-backend"]
+blinc = ["elpis-blinc/desktop"]
 
 [dependencies]
 elpis-blinc = { workspace = true }

@@ -8,8 +8,11 @@ description = "Blinc UI backend for the Elpis sandbox: lowers the elpis-protocol
 
 [features]
 default = []
-# Pull in the real Blinc UI framework (wgpu, windowing, text, svg, animation,
-# theming, router) and build the live GPU backend + windowed run loop.
+# Pull in the real Blinc UI framework (text, layout, svg, animation, theming,
+# router) and build the platform-agnostic live backend + frame closure. This
+# does NOT pin a Blinc platform runner — the consuming demo crate supplies one
+# (blinc_app/windowed, /web, or /android), so the same interpreter serves
+# desktop, web (wasm), and Android.
 blinc-backend = [
     "dep:blinc_app",
     "dep:blinc_core",
@@ -21,6 +24,8 @@ blinc-backend = [
     "dep:blinc_image",
     "dep:blinc_text",
 ]
+# Desktop: the windowed run loop, on top of Blinc's windowed platform.
+desktop = ["blinc-backend", "blinc_app/windowed"]
 
 [dependencies]
 elpis-protocol = { workspace = true }

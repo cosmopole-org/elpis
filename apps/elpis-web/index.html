@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Elpis · Blinc Miniapp demo</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #0a0b12; color: #cdd2e6;
+        font-family: system-ui, sans-serif; overflow: hidden; }
+      #elpis-canvas { display: block; width: 100vw; height: 100vh; }
+      #unsupported { position: fixed; inset: 0; display: none; place-content: center;
+        text-align: center; padding: 2rem; }
+      #unsupported a { color: #66ccff; }
+      .wrap { max-width: 32rem; margin: auto; }
+    </style>
+  </head>
+  <body>
+    <canvas id="elpis-canvas"></canvas>
+    <div id="unsupported">
+      <div class="wrap">
+        <h1>WebGPU required</h1>
+        <p>This demo renders with Blinc's WebGPU backend. Open it in a
+        WebGPU-capable browser (Chrome / Edge 113+, or Safari 18+).</p>
+      </div>
+    </div>
+    <script type="module">
+      if (!('gpu' in navigator)) {
+        document.getElementById('unsupported').style.display = 'grid';
+        document.getElementById('elpis-canvas').style.display = 'none';
+      } else {
+        import('./pkg/elpis_web.js').then((m) => m.default()).catch((e) => {
+          console.error('Failed to start Elpis web demo:', e);
+        });
+      }
+    </script>
+  </body>
+</html>

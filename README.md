@@ -143,6 +143,42 @@ apt-get install -y libpango1.0-dev libgdk-pixbuf-2.0-dev libatk1.0-dev \
 (Plus a working Vulkan/GL driver at run time to actually open a window.) The
 headless default path needs none of this.
 
+## Demos: desktop, web, and Android
+
+The same Elpis sandbox + bridge + `Node → Blinc` lowering drives three platform
+targets; only the run loop differs (each demo crate supplies its own `blinc_app`
+platform feature and calls the shared `elpis_blinc::frame_closure`):
+
+| Target | Crate | Run loop | Status |
+|--------|-------|----------|--------|
+| Desktop | `apps/elpis-app` (`--features blinc`) | `WindowedApp::run` | compiles against blinc 0.5.1 |
+| Web (wasm) | `apps/elpis-web` | `WebApp::run` (WebGPU canvas) | **compiles for `wasm32-unknown-unknown`** |
+| Android | `apps/elpis-android` | `AndroidApp::run` (NativeActivity) | built in CI via `cargo-ndk` + Gradle |
+
+### GitHub workflows
+
+* **`.github/workflows/web.yml`** — builds `apps/elpis-web` with `wasm-pack`,
+  assembles a static site (`index.html` + `pkg/`), and deploys it to **GitHub
+  Pages**. One-time setup: repo *Settings → Pages → Source: GitHub Actions*.
+  The demo then lives at `https://<owner>.github.io/<repo>/`.
+
+* **`.github/workflows/android.yml`** — cross-compiles `apps/elpis-android` to an
+  `arm64-v8a` `.so` with `cargo-ndk`, packages it into a debug APK with the
+  Gradle project under `apps/elpis-android/android/`, and **commits the APK to
+  the repository root** as `elpis-demo.apk` (also uploaded as a build artifact).
+
+Both also run on `workflow_dispatch`. They trigger on pushes to `main`, so they
+take effect once this branch is merged to the default branch.
+
+Build the web demo locally:
+
+```bash
+rustup target add wasm32-unknown-unknown
+cargo install wasm-pack
+wasm-pack build apps/elpis-web --target web --release --out-dir pkg
+python3 -m http.server -d apps/elpis-web   # then open http://localhost:8000
+```
+
 ## Sandboxing
 
 Each Elpis instance is an isolated VM with its own capability set and resource

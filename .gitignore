@@ -1,3 +1,14 @@
 /target
 **/*.rs.bk
 Cargo.lock.bak
+
+# Web demo build output (wasm-pack).
+/apps/elpis-web/pkg
+/_site
+
+# Android demo build output.
+/apps/elpis-android/android/app/src/main/jniLibs
+/apps/elpis-android/android/.gradle
+/apps/elpis-android/android/build
+/apps/elpis-android/android/app/build
+/apps/elpis-android/android/local.properties

@@ -44,6 +44,17 @@ pub use headless_default::DefaultBackend;
 #[cfg(feature = "blinc-backend")]
 mod blinc_backend;
 #[cfg(feature = "blinc-backend")]
-pub use blinc_backend::{build, run_windowed, BlincBackend, BlincShared};
+pub use blinc_backend::{build, frame_closure, BlincBackend, BlincShared};
+#[cfg(feature = "desktop")]
+pub use blinc_backend::run_windowed;
 #[cfg(feature = "blinc-backend")]
 pub use blinc_backend::BlincBackend as DefaultBackend;
+
+// Re-export Blinc's per-frame context + element trait so the platform demo
+// crates (elpis-web, elpis-android) can name the `frame_closure` return type
+// and call `WebApp::run` / `AndroidApp::run` without a direct Blinc dependency
+// on those types.
+#[cfg(feature = "blinc-backend")]
+pub use blinc_app::windowed::WindowedContext;
+#[cfg(feature = "blinc-backend")]
+pub use blinc_app::ElementBuilder;

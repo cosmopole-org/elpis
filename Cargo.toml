@@ -6,6 +6,8 @@ members = [
     "crates/elpis-host",
     "crates/elpis-blinc",
     "apps/elpis-app",
+    "apps/elpis-web",
+    "apps/elpis-android",
 ]
 
 # The real blinc renderer (wgpu, wayland, etc.) is heavy and pulled only when
@@ -42,8 +44,10 @@ elpis-blinc = { path = "crates/elpis-blinc" }
 # `default-features = false` drops the desktop convenience surfaces (file
 # dialogs, tray, notifications, hotkeys) whose gtk/dbus transitive trees need
 # system libraries (pango, gdk-pixbuf) that aren't present in minimal/CI
-# environments. We only need the lean windowed runtime.
-blinc_app = { version = "0.5", default-features = false, features = ["windowed"] }
+# environments. The platform runner (windowed / web / android) is selected by
+# the consuming crate's feature, so none is pinned here.
+blinc_app = { version = "0.5", default-features = false }
+blinc_platform_android = "0.5"
 blinc_core = "0.5"
 blinc_layout = "0.5"
 blinc_animation = "0.5"

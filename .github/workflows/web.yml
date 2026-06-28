@@ -1,0 +1,69 @@
+# Build the Elpis web demo (the showcase Miniapp running on the elpian-vm,
+# rendered by Blinc's WebGPU backend) to wasm and deploy it to GitHub Pages.
+#
+# One-time setup: in the repository Settings → Pages, set "Source" to
+# "GitHub Actions". The first run on the default branch then publishes the demo
+# at https://<owner>.github.io/<repo>/.
+name: Deploy web demo to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Permissions the Pages deployment needs.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow only one concurrent Pages deployment.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (with wasm target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build the wasm bundle
+        run: wasm-pack build apps/elpis-web --target web --release --out-dir pkg
+
+      - name: Assemble the static site
+        run: |
+          mkdir -p _site
+          cp apps/elpis-web/index.html _site/index.html
+          cp -r apps/elpis-web/pkg _site/pkg
+          # GitHub Pages otherwise runs the upload through Jekyll, which strips
+          # files/dirs beginning with an underscore (none here, but be safe).
+          touch _site/.nojekyll
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

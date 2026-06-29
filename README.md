@@ -130,7 +130,16 @@ are unit-tested without pulling Blinc. The live renderer (`elpis-blinc`'s
 [Blinc 0.5 crates][blinc] from crates.io (wgpu, windowing, text, svg, animation,
 theming, router) and is built only when that feature is enabled. It is
 compile-verified against `blinc_app` 0.5.1 (`cargo check -p elpis-blinc
---features blinc-backend`).
+--features blinc-backend` and `cargo check -p elpis-web --target
+wasm32-unknown-unknown`).
+
+The backend renders the **full surface**: every widget family from Blinc
+primitives, complete text styling, real linear/radial/conic gradients (for
+backgrounds and canvas paint), the entire 2D canvas op set (rects, rounded
+rects, circles, ellipses, lines, polylines/polygons, arbitrary bezier paths,
+arcs, text, clip + transform + opacity stacks), and a CPU software 3D renderer
+that projects, depth-sorts, and Lambert-shades the `Scene3D` geometry so the 3D
+tab shows real lit, rotating solids.
 
 Building the windowed path needs the usual Linux desktop/GPU development
 libraries that the Blinc/winit/wgpu stack links against — on Debian/Ubuntu:

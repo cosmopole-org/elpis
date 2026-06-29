@@ -44,6 +44,8 @@ pub use headless_default::DefaultBackend;
 #[cfg(feature = "blinc-backend")]
 mod blinc_backend;
 #[cfg(feature = "blinc-backend")]
+mod scene;
+#[cfg(feature = "blinc-backend")]
 pub use blinc_backend::{build, frame_closure, BlincBackend, BlincShared};
 #[cfg(feature = "desktop")]
 pub use blinc_backend::run_windowed;

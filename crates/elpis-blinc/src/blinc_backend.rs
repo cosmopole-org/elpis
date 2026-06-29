@@ -23,16 +23,25 @@ use serde_json::Value;
 
 use blinc_app::windowed::WindowedContext;
 use blinc_core::{
-    Color as BColor, CornerRadius as BCorner, DrawContext, LineCap as BLineCap,
-    LineJoin as BLineJoin, Path as BPath, Point as BPoint, Rect as BRect, Stroke as BStroke,
-    TextStyle as BTextStyle, Transform as BTransform,
+    Brush as BBrush, ClipShape, Color as BColor, CornerRadius as BCorner, DrawContext, Gradient,
+    GradientSpace, GradientSpread, GradientStop as BStop, LineCap as BLineCap, LineJoin as BLineJoin,
+    Path as BPath, Point as BPoint, Rect as BRect, Stroke as BStroke, TextStyle as BTextStyle,
+    Transform as BTransform,
 };
+use blinc_app::TextAlign as LTextAlign;
 use blinc_layout::canvas::{canvas, Canvas, CanvasBounds};
 use blinc_layout::div::{div, Div};
+use blinc_layout::image::{image, ObjectFit};
 use blinc_layout::prelude::*;
-use blinc_layout::text::text as btext;
+use blinc_layout::svg::svg;
+use blinc_layout::text::{text as btext, Text};
 
-use elpis_protocol::canvas::{CanvasSpec, DrawOp, LineCap, LineJoin, PathSeg, Point as PPoint, Rect as PRect, Stroke as PStroke};
+use elpis_protocol::canvas::{
+    CanvasSpec, DrawOp, LineCap, LineJoin, PathSeg, Point as PPoint, Rect as PRect, Stroke as PStroke,
+};
+use elpis_protocol::node::{FontWeight, ProgressSpec, SpinnerSpec, TextAlign, TextSpec};
+use elpis_protocol::scene3d::Scene3DSpec;
+use elpis_protocol::style::ImageFit;
 
 use elpis_host::{Sandbox, SurfaceInfo, UiBackend, UiEvent};
 use elpis_protocol::style::{Align, Brush, Color, Display, FlexDirection, Justify};
@@ -102,20 +111,6 @@ fn bcolor(c: Color) -> BColor {
     BColor::rgba(c.r, c.g, c.b, c.a)
 }
 
-/// Resolve a brush to a representative Blinc color (gradients fall back to their
-/// first stop until the gradient builder path is wired).
-fn brush_color(b: &Brush) -> BColor {
-    match b {
-        Brush::Solid { color } => bcolor(*color),
-        Brush::LinearGradient { stops, .. }
-        | Brush::RadialGradient { stops, .. }
-        | Brush::ConicGradient { stops, .. } => {
-            stops.first().map(|s| bcolor(s.color)).unwrap_or(BColor::WHITE)
-        }
-        Brush::Image { .. } => BColor::WHITE,
-    }
-}
-
 /// Apply the resolved [`BlincStyle`] to a `Div` via the Tailwind-like builder.
 fn apply_style(mut d: Div, s: &BlincStyle) -> Div {
     // Layout mode + direction.
@@ -173,7 +168,7 @@ fn apply_style(mut d: Div, s: &BlincStyle) -> Div {
     }
     // Paint.
     if let Some(b) = &s.background {
-        d.set_bg(brush_color(b));
+        d.set_bg(bg_brush(b));
     }
     if let Some(r) = s.radius {
         d.set_rounded(r.tl.max(r.tr).max(r.br).max(r.bl));
@@ -221,105 +216,211 @@ fn blinc_core_shadow(s: &elpis_protocol::style::Shadow) -> blinc_core::Shadow {
 /// Build a Blinc element for a lowered node, wiring its events into `shared`.
 pub fn build(dom: &BlincDom, shared: &BlincShared) -> Boxed {
     match &dom.content {
-        BlincContent::Text(t) => {
-            let mut e = btext(&t.text).size(t.size);
-            if let Some(c) = dom.style.foreground {
-                e = e.color(bcolor(c));
+        BlincContent::Text(t) => Box::new(text_el(t, text_color(dom))),
+        BlincContent::RichText(rt) => {
+            let mut row = div().flex_row().flex_wrap().items_baseline();
+            for run in &rt.runs {
+                let mut e = btext(&run.text).size(run.size.unwrap_or(14.0));
+                if is_bold(run.weight) {
+                    e = e.bold();
+                }
+                if run.italic {
+                    e = e.italic();
+                }
+                if run.underline {
+                    e = e.underline();
+                }
+                e = e.color(run.color.map(bcolor).unwrap_or_else(|| text_color(dom)));
+                row = row.child(e);
+            }
+            Box::new(row)
+        }
+        BlincContent::Markdown(m) => Box::new(render_markdown(&m.source, dom)),
+        BlincContent::Image(i) => {
+            let mut e = image(i.src.clone()).fit(bfit(i.fit));
+            if let Some(w) = dom.style.width.and_then(length_px) {
+                e = e.w(w);
+            }
+            if let Some(h) = dom.style.height.and_then(length_px) {
+                e = e.h(h);
+            }
+            if let Some(r) = dom.style.radius {
+                e = e.rounded(r.tl.max(r.tr).max(r.br).max(r.bl));
             }
             Box::new(e)
         }
-        BlincContent::Markdown(m) => {
-            // Minimal markdown: render the raw source as body text. (Full
-            // markdown goes through blinc_layout's markdown element later.)
-            Box::new(btext(&m.source).size(14.0).color(text_color(dom)))
+        BlincContent::Svg(s) => {
+            let src = s.source.clone().or_else(|| s.src.clone()).unwrap_or_default();
+            let mut e = svg(src);
+            if let Some(c) = s.color {
+                e = e.color(bcolor(c));
+            }
+            if let (Some(w), Some(h)) =
+                (dom.style.width.and_then(length_px), dom.style.height.and_then(length_px))
+            {
+                e = e.size(w, h);
+            }
+            Box::new(e)
+        }
+        BlincContent::Icon(i) => {
+            let col = i.color.map(bcolor).unwrap_or_else(|| text_color(dom));
+            Box::new(
+                div()
+                    .w(i.size)
+                    .h(i.size)
+                    .items_center()
+                    .justify_center()
+                    .child(btext(short_icon(&i.name)).size(i.size * 0.7).color(col)),
+            )
         }
         BlincContent::Button(b) => {
             let label = btext(&b.label).size(15.0).color(BColor::WHITE);
-            let mut d = chip(&dom.style, BColor::rgba(0.22, 0.34, 0.55, 1.0)).child(label);
-            d = wire_events(d, dom, shared);
-            Box::new(d)
+            let d = chip(&dom.style, BColor::rgba(0.22, 0.34, 0.55, 1.0)).child(label);
+            Box::new(wire_events(d, dom, shared))
         }
         BlincContent::Input(i) => {
-            let shown = if i.value.is_empty() {
-                i.placeholder.clone().unwrap_or_default()
+            let (shown, color) = if i.value.is_empty() {
+                (i.placeholder.clone().unwrap_or_default(), BColor::rgba(0.55, 0.55, 0.62, 1.0))
             } else {
-                i.value.clone()
+                (i.value.clone(), BColor::WHITE)
             };
-            let color = if i.value.is_empty() {
-                BColor::rgba(0.55, 0.55, 0.62, 1.0)
-            } else {
-                BColor::WHITE
-            };
-            let mut d = field_box(&dom.style).child(btext(&shown).size(15.0).color(color));
-            d = wire_events(d, dom, shared);
-            Box::new(d)
+            let d = field_box(&dom.style).child(btext(&shown).size(15.0).color(color));
+            Box::new(wire_events(d, dom, shared))
         }
-        BlincContent::Toggle { spec, toggle_kind } => {
+        BlincContent::Toggle { spec, .. } => {
             let on = spec.checked;
-            let knob = chip_fixed(
-                40.0,
-                22.0,
-                if on { BColor::rgba(0.3, 0.7, 1.0, 1.0) } else { BColor::rgba(0.3, 0.3, 0.4, 1.0) },
-            );
-            let mut row = div().flex_row().items_center().gap(10.0).child(knob);
+            let track_bg =
+                if on { BColor::rgba(0.3, 0.7, 1.0, 1.0) } else { BColor::rgba(0.3, 0.3, 0.4, 1.0) };
+            let knob = div().w(18.0).h(18.0).rounded(9.0).bg(BColor::WHITE);
+            let mut track = div().w(40.0).h(22.0).rounded(11.0).bg(track_bg).items_center();
+            track = if on { track.justify_end() } else { track.justify_start() };
+            let mut row = div().flex_row().items_center().gap(10.0).child(track.child(knob));
             if let Some(label) = &spec.label {
                 row = row.child(btext(label).size(15.0).color(text_color(dom)));
             }
-            let _ = toggle_kind;
             Box::new(wire_events(row, dom, shared))
+        }
+        BlincContent::Radio(r) => {
+            let mut col = div().flex_col().gap(8.0);
+            for opt in &r.options {
+                let selected = r.selected.as_deref() == Some(opt.value.as_str());
+                let mut outer = div().w(18.0).h(18.0).rounded(9.0).items_center().justify_center();
+                outer.set_border(
+                    2.0,
+                    if selected { BColor::rgba(0.3, 0.7, 1.0, 1.0) } else { BColor::rgba(0.4, 0.4, 0.5, 1.0) },
+                );
+                let outer = if selected {
+                    outer.child(div().w(8.0).h(8.0).rounded(4.0).bg(BColor::rgba(0.3, 0.7, 1.0, 1.0)))
+                } else {
+                    outer
+                };
+                col = col.child(
+                    div()
+                        .flex_row()
+                        .items_center()
+                        .gap(8.0)
+                        .child(outer)
+                        .child(btext(&opt.label).size(15.0).color(text_color(dom))),
+                );
+            }
+            Box::new(wire_events(col, dom, shared))
         }
         BlincContent::Slider(s) => {
             let frac = if s.max > s.min { (s.value - s.min) / (s.max - s.min) } else { 0.0 };
+            let fill = div().w(200.0 * frac.clamp(0.0, 1.0)).h(6.0).rounded(3.0).bg(BColor::rgba(0.3, 0.7, 1.0, 1.0));
             let track = div()
                 .w(200.0)
-                .h(6.0)
-                .rounded(3.0)
-                .bg(BColor::rgba(0.3, 0.3, 0.4, 1.0))
-                .child(div().w(200.0 * frac.clamp(0.0, 1.0)).h(6.0).rounded(3.0).bg(BColor::rgba(0.3, 0.7, 1.0, 1.0)));
+                .h(16.0)
+                .items_center()
+                .child(div().w(200.0).h(6.0).rounded(3.0).bg(BColor::rgba(0.3, 0.3, 0.4, 1.0)).child(fill));
             Box::new(wire_events(div().flex_col().gap(4.0).child(track), dom, shared))
         }
-        BlincContent::Progress(p) => {
-            let frac = p.value.unwrap_or(0.3).clamp(0.0, 1.0);
-            let bar = div()
-                .w(200.0)
-                .h(8.0)
-                .rounded(4.0)
-                .bg(BColor::rgba(0.25, 0.25, 0.32, 1.0))
-                .child(div().w(200.0 * frac).h(8.0).rounded(4.0).bg(BColor::rgba(0.4, 0.8, 1.0, 1.0)));
-            Box::new(bar)
-        }
-        BlincContent::Dropdown(d) => {
-            let label = d
+        BlincContent::Dropdown(dd) => {
+            let label = dd
                 .selected
                 .as_ref()
-                .and_then(|sel| d.options.iter().find(|o| &o.value == sel))
+                .and_then(|sel| dd.options.iter().find(|o| &o.value == sel))
                 .map(|o| o.label.clone())
-                .or_else(|| d.placeholder.clone())
+                .or_else(|| dd.placeholder.clone())
                 .unwrap_or_else(|| "Select…".to_string());
-            let mut e = field_box(&dom.style).child(btext(&label).size(15.0).color(BColor::WHITE));
-            e = wire_events(e, dom, shared);
-            Box::new(e)
-        }
-        BlincContent::Canvas(c) => Box::new(build_canvas(c, &dom.style)),
-        BlincContent::Scene3D(s) => {
-            // A real 3D viewport drives DrawContext's camera/mesh API; here we
-            // show a labeled placeholder card so the scene tab isn't blank.
-            let label = format!("3D scene · {} entities · {} lights", s.entities.len(), s.lights.len());
-            let card = apply_style(div(), &dom.style)
+            let field = field_box(&dom.style)
+                .flex_row()
                 .items_center()
-                .justify_center()
-                .bg(BColor::rgba(0.08, 0.10, 0.16, 1.0))
-                .child(btext(&label).size(16.0).color(BColor::rgba(0.6, 0.8, 1.0, 1.0)));
-            Box::new(card)
+                .justify_between()
+                .gap(10.0)
+                .child(btext(&label).size(15.0).color(BColor::WHITE))
+                .child(btext("▾").size(14.0).color(BColor::rgba(0.6, 0.6, 0.7, 1.0)));
+            Box::new(wire_events(field, dom, shared))
         }
-        // Containers and the remaining families build a styled div with children.
+        BlincContent::Tabs(t) => {
+            let mut row = div().flex_row().gap(6.0);
+            for (i, tab) in t.tabs.iter().enumerate() {
+                let sel = i as u32 == t.selected;
+                let mut chip_ = div().items_center().justify_center();
+                chip_.set_padding_x(14.0);
+                chip_.set_padding_y(6.0);
+                chip_.set_rounded(8.0);
+                chip_.set_bg(if sel {
+                    BColor::rgba(0.3, 0.7, 1.0, 1.0)
+                } else {
+                    BColor::rgba(0.18, 0.19, 0.25, 1.0)
+                });
+                row = row.child(chip_.child(btext(&tab.label).size(14.0).color(BColor::WHITE)));
+            }
+            Box::new(wire_events(row, dom, shared))
+        }
+        BlincContent::Carousel(c) => {
+            let mut col = div().flex_col().items_center().gap(8.0);
+            if !dom.children.is_empty() {
+                let idx = (c.index as usize).min(dom.children.len() - 1);
+                col = col.child_box(build(&dom.children[idx], shared));
+                if c.indicators {
+                    let mut dots = div().flex_row().gap(6.0);
+                    for i in 0..dom.children.len() {
+                        let on = i == idx;
+                        dots = dots.child(div().w(8.0).h(8.0).rounded(4.0).bg(if on {
+                            BColor::WHITE
+                        } else {
+                            BColor::rgba(0.4, 0.4, 0.5, 1.0)
+                        }));
+                    }
+                    col = col.child(dots);
+                }
+            }
+            Box::new(wire_events(col, dom, shared))
+        }
+        BlincContent::Progress(p) => Box::new(build_progress(p)),
+        BlincContent::Spinner(s) => Box::new(build_spinner(s)),
+        BlincContent::Canvas(c) => Box::new(build_canvas(c, &dom.style)),
+        BlincContent::Scene3D(s) => Box::new(build_scene3d(s, &dom.style)),
+        BlincContent::Media { spec, media_kind } => {
+            let glyph = if *media_kind == "audio" { "♪" } else { "▶" };
+            let mut card =
+                apply_style(div(), &dom.style).flex_col().items_center().justify_center().gap(8.0);
+            card.set_bg(BColor::rgba(0.08, 0.09, 0.13, 1.0));
+            card.set_rounded(10.0);
+            Box::new(
+                card.child(btext(glyph).size(36.0).color(BColor::WHITE))
+                    .child(btext(&spec.src).size(12.0).color(BColor::rgba(0.6, 0.6, 0.7, 1.0))),
+            )
+        }
+        BlincContent::Overlay(o) => {
+            let mut layer = apply_style(div(), &dom.style);
+            if o.backdrop {
+                layer.set_bg(BColor::rgba(0.0, 0.0, 0.0, 0.5));
+            }
+            for child in &dom.children {
+                layer = layer.child_box(build(child, shared));
+            }
+            Box::new(wire_events(layer, dom, shared))
+        }
+        // Containers (div/row/column/stack/grid/scroll/spacer) + Component.
         _ => {
             let mut d = apply_style(div(), &dom.style);
             for child in &dom.children {
                 d = d.child_box(build(child, shared));
             }
-            d = wire_events(d, dom, shared);
-            Box::new(d)
+            Box::new(wire_events(d, dom, shared))
         }
     }
 }
@@ -342,10 +443,6 @@ fn chip(style: &BlincStyle, fallback_bg: BColor) -> Div {
     d
 }
 
-fn chip_fixed(w: f32, h: f32, bg: BColor) -> Div {
-    div().w(w).h(h).rounded(h / 2.0).bg(bg)
-}
-
 /// A bordered input/field box.
 fn field_box(style: &BlincStyle) -> Div {
     let mut d = apply_style(div(), style).items_center();
@@ -355,6 +452,172 @@ fn field_box(style: &BlincStyle) -> Div {
     d.set_padding_x(12.0);
     d.set_padding_y(10.0);
     d
+}
+
+/// Build a fully-styled Blinc text element from a [`TextSpec`].
+fn text_el(t: &TextSpec, color: BColor) -> Text {
+    let mut e = btext(&t.text).size(t.size).color(color).align(balign(t.align));
+    if is_bold(t.weight) {
+        e = e.bold();
+    }
+    if t.italic {
+        e = e.italic();
+    }
+    if t.underline {
+        e = e.underline();
+    }
+    if t.strikethrough {
+        e = e.strikethrough();
+    }
+    if let Some(f) = &t.font {
+        e = e.font(f.clone());
+    }
+    if let Some(lh) = t.line_height {
+        e = e.line_height(lh);
+    }
+    if let Some(ls) = t.letter_spacing {
+        e = e.letter_spacing(ls);
+    }
+    e
+}
+
+/// Whether a protocol weight should render bold (the Blinc text element exposes
+/// a `bold()` toggle; its numeric `FontWeight` enum is a distinct type from the
+/// `blinc_core` one used by the canvas `TextStyle`).
+fn is_bold(w: FontWeight) -> bool {
+    matches!(w, FontWeight::Semibold | FontWeight::Bold | FontWeight::Black)
+}
+
+fn balign(a: TextAlign) -> LTextAlign {
+    match a {
+        TextAlign::Start | TextAlign::Justify => LTextAlign::Left,
+        TextAlign::Center => LTextAlign::Center,
+        TextAlign::End => LTextAlign::Right,
+    }
+}
+
+fn bfit(f: ImageFit) -> ObjectFit {
+    match f {
+        ImageFit::Cover => ObjectFit::Cover,
+        ImageFit::Contain => ObjectFit::Contain,
+        ImageFit::Fill => ObjectFit::Fill,
+        ImageFit::ScaleDown => ObjectFit::ScaleDown,
+        ImageFit::None => ObjectFit::Contain,
+    }
+}
+
+/// A short glyph for an icon name (first character) until icon-set lookup is
+/// wired through `blinc_tabler_icons`.
+fn short_icon(name: &str) -> String {
+    name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "•".to_string())
+}
+
+/// Minimal markdown: a column where `#`-prefixed lines become headings, `-`
+/// lines become bullets, and the rest is body text.
+fn render_markdown(source: &str, dom: &BlincDom) -> Div {
+    let mut col = div().flex_col().gap(6.0);
+    let fg = text_color(dom);
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        let el = if let Some(rest) = trimmed.strip_prefix("# ") {
+            btext(rest).size(24.0).bold().color(fg)
+        } else if let Some(rest) = trimmed.strip_prefix("## ") {
+            btext(rest).size(19.0).bold().color(fg)
+        } else if let Some(rest) = trimmed.strip_prefix("- ") {
+            btext(&format!("•  {rest}")).size(14.0).color(fg)
+        } else if trimmed.is_empty() {
+            continue;
+        } else {
+            btext(strip_inline_md(trimmed)).size(14.0).color(fg)
+        };
+        col = col.child(el);
+    }
+    col
+}
+
+/// Drop the most common inline markdown markers (`**`, `*`, `` ` ``) so the
+/// body text reads cleanly even though spans aren't individually styled.
+fn strip_inline_md(s: &str) -> String {
+    s.replace("**", "").replace('`', "")
+}
+
+fn build_progress(p: &ProgressSpec) -> Div {
+    let frac = p.value.unwrap_or(0.3).clamp(0.0, 1.0);
+    let circular = p.shape.as_deref() == Some("circular");
+    if circular {
+        // A ring drawn on a small canvas.
+        let c = canvas(move |ctx: &mut dyn DrawContext, b: CanvasBounds| {
+            let cx = b.width * 0.5;
+            let cy = b.height * 0.5;
+            let r = cx.min(cy) - 4.0;
+            ctx.stroke_circle(
+                BPoint::new(cx, cy),
+                r,
+                &BStroke::new(4.0),
+                BBrush::Solid(BColor::rgba(0.25, 0.25, 0.32, 1.0)),
+            );
+            let mut path = BPath::new();
+            let n = 48;
+            for i in 0..=n {
+                let t = -std::f32::consts::FRAC_PI_2
+                    + std::f32::consts::TAU * frac * (i as f32 / n as f32);
+                let (x, y) = (cx + r * t.cos(), cy + r * t.sin());
+                path = if i == 0 { path.move_to(x, y) } else { path.line_to(x, y) };
+            }
+            ctx.stroke_path(
+                &path,
+                &BStroke::new(4.0).with_cap(BLineCap::Round),
+                BBrush::Solid(BColor::rgba(0.4, 0.8, 1.0, 1.0)),
+            );
+        })
+        .w(44.0)
+        .h(44.0);
+        div().child(c)
+    } else {
+        let fill = div().w(200.0 * frac).h(8.0).rounded(4.0).bg(BColor::rgba(0.4, 0.8, 1.0, 1.0));
+        div().w(200.0).h(8.0).rounded(4.0).bg(BColor::rgba(0.25, 0.25, 0.32, 1.0)).child(fill)
+    }
+}
+
+fn build_spinner(s: &SpinnerSpec) -> Canvas {
+    let size = s.size;
+    let col = s.color.map(bcolor).unwrap_or(BColor::rgba(0.4, 0.8, 1.0, 1.0));
+    canvas(move |ctx: &mut dyn DrawContext, b: CanvasBounds| {
+        let cx = b.width * 0.5;
+        let cy = b.height * 0.5;
+        let r = cx.min(cy) - 3.0;
+        ctx.stroke_circle(
+            BPoint::new(cx, cy),
+            r,
+            &BStroke::new(3.0),
+            BBrush::Solid(BColor::rgba(0.3, 0.3, 0.4, 1.0)),
+        );
+        // A bright three-quarter arc as the "active" sweep.
+        let mut path = BPath::new();
+        let n = 36;
+        for i in 0..=n {
+            let t = std::f32::consts::TAU * 0.75 * (i as f32 / n as f32);
+            let (x, y) = (cx + r * t.cos(), cy + r * t.sin());
+            path = if i == 0 { path.move_to(x, y) } else { path.line_to(x, y) };
+        }
+        ctx.stroke_path(&path, &BStroke::new(3.0).with_cap(BLineCap::Round), BBrush::Solid(col));
+    })
+    .w(size)
+    .h(size)
+}
+
+fn build_scene3d(spec: &Scene3DSpec, style: &BlincStyle) -> Canvas {
+    let spec = spec.clone();
+    let mut c = canvas(move |ctx: &mut dyn DrawContext, bounds: CanvasBounds| {
+        crate::scene::render(ctx, bounds.width, bounds.height, &spec);
+    });
+    if let Some(w) = style.width.and_then(length_px) {
+        c = c.w(w);
+    }
+    if let Some(h) = style.height.and_then(length_px) {
+        c = c.h(h);
+    }
+    c
 }
 
 // ---------------------------------------------------------------------------
@@ -375,8 +638,111 @@ fn build_canvas(spec: &CanvasSpec, style: &BlincStyle) -> Canvas {
     c
 }
 
-fn bbrush(b: &Brush) -> blinc_core::Brush {
-    blinc_core::Brush::Solid(brush_color(b))
+fn bstops(stops: &[elpis_protocol::style::GradientStop]) -> Vec<BStop> {
+    stops.iter().map(|s| BStop::new(s.offset, bcolor(s.color))).collect()
+}
+
+/// A brush for an element **background**, using the bounding-box (0..1) space so
+/// the gradient scales with the element regardless of size.
+fn bg_brush(b: &Brush) -> BBrush {
+    match b {
+        Brush::Solid { color } => BBrush::Solid(bcolor(*color)),
+        Brush::LinearGradient { angle, stops } => {
+            let rad = angle.to_radians();
+            let (dx, dy) = (rad.cos() * 0.5, rad.sin() * 0.5);
+            BBrush::Gradient(Gradient::Linear {
+                start: BPoint::new(0.5 - dx, 0.5 - dy),
+                end: BPoint::new(0.5 + dx, 0.5 + dy),
+                stops: bstops(stops),
+                space: GradientSpace::ObjectBoundingBox,
+                spread: GradientSpread::Pad,
+            })
+        }
+        Brush::RadialGradient { center, radius, stops } => BBrush::Gradient(Gradient::Radial {
+            center: BPoint::new(center[0], center[1]),
+            radius: *radius,
+            focal: None,
+            stops: bstops(stops),
+            space: GradientSpace::ObjectBoundingBox,
+            spread: GradientSpread::Pad,
+        }),
+        Brush::ConicGradient { center, start_angle, stops } => BBrush::Gradient(Gradient::Conic {
+            center: BPoint::new(center[0], center[1]),
+            start_angle: start_angle.to_radians(),
+            stops: bstops(stops),
+            space: GradientSpace::ObjectBoundingBox,
+        }),
+        Brush::Image { .. } => BBrush::Solid(BColor::WHITE),
+    }
+}
+
+/// A brush for a **canvas** fill/stroke, in user space spanning the shape's
+/// bounding box `(x, y, w, h)`.
+fn canvas_brush(b: &Brush, x: f32, y: f32, w: f32, h: f32) -> BBrush {
+    match b {
+        Brush::Solid { color } => BBrush::Solid(bcolor(*color)),
+        Brush::LinearGradient { angle, stops } => {
+            let rad = angle.to_radians();
+            let (cx, cy) = (x + w * 0.5, y + h * 0.5);
+            let (dx, dy) = (rad.cos() * w * 0.5, rad.sin() * h * 0.5);
+            BBrush::Gradient(Gradient::Linear {
+                start: BPoint::new(cx - dx, cy - dy),
+                end: BPoint::new(cx + dx, cy + dy),
+                stops: bstops(stops),
+                space: GradientSpace::UserSpace,
+                spread: GradientSpread::Pad,
+            })
+        }
+        Brush::RadialGradient { center, radius, stops } => BBrush::Gradient(Gradient::Radial {
+            center: BPoint::new(x + center[0] * w, y + center[1] * h),
+            radius: radius * w.max(h),
+            focal: None,
+            stops: bstops(stops),
+            space: GradientSpace::UserSpace,
+            spread: GradientSpread::Pad,
+        }),
+        Brush::ConicGradient { center, start_angle, stops } => BBrush::Gradient(Gradient::Conic {
+            center: BPoint::new(x + center[0] * w, y + center[1] * h),
+            start_angle: start_angle.to_radians(),
+            stops: bstops(stops),
+            space: GradientSpace::UserSpace,
+        }),
+        Brush::Image { .. } => BBrush::Solid(BColor::WHITE),
+    }
+}
+
+fn rect_brush(b: &Brush, r: &PRect) -> BBrush {
+    canvas_brush(b, r.x, r.y, r.w, r.h)
+}
+
+fn points_bbox(pts: &[PPoint]) -> (f32, f32, f32, f32) {
+    let (mut minx, mut miny, mut maxx, mut maxy) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for p in pts {
+        minx = minx.min(p.x);
+        miny = miny.min(p.y);
+        maxx = maxx.max(p.x);
+        maxy = maxy.max(p.y);
+    }
+    if pts.is_empty() {
+        (0.0, 0.0, 0.0, 0.0)
+    } else {
+        (minx, miny, maxx - minx, maxy - miny)
+    }
+}
+
+fn seg_bbox(segs: &[PathSeg]) -> (f32, f32, f32, f32) {
+    let mut pts = Vec::new();
+    for s in segs {
+        match *s {
+            PathSeg::MoveTo { x, y }
+            | PathSeg::LineTo { x, y }
+            | PathSeg::QuadTo { x, y, .. }
+            | PathSeg::CubicTo { x, y, .. }
+            | PathSeg::ArcTo { x, y, .. } => pts.push(PPoint { x, y }),
+            PathSeg::Close => {}
+        }
+    }
+    points_bbox(&pts)
 }
 
 fn brect(r: &PRect) -> BRect {
@@ -422,38 +788,62 @@ fn bpath(segments: &[PathSeg]) -> BPath {
 }
 
 fn replay(ctx: &mut dyn DrawContext, bounds: CanvasBounds, ops: &[DrawOp]) {
+    // Per-`Save` nesting: counts of [transforms, clips, opacities] pushed since
+    // the matching Save, popped on Restore. The base frame (index 0) catches
+    // pushes made without a Save and is flushed at the end so nothing leaks.
+    let mut frames: Vec<[u32; 3]> = vec![[0, 0, 0]];
+    let bump = |frames: &mut Vec<[u32; 3]>, idx: usize| {
+        if let Some(f) = frames.last_mut() {
+            f[idx] += 1;
+        }
+    };
+
     for op in ops {
         match op {
-            DrawOp::Clear { color } => {
-                ctx.fill_rect(
-                    BRect::new(0.0, 0.0, bounds.width, bounds.height),
-                    BCorner::ZERO,
-                    blinc_core::Brush::Solid(bcolor(*color)),
-                );
-            }
+            DrawOp::Clear { color } => ctx.fill_rect(
+                BRect::new(0.0, 0.0, bounds.width, bounds.height),
+                BCorner::ZERO,
+                BBrush::Solid(bcolor(*color)),
+            ),
             DrawOp::FillRect { rect, brush } => {
-                ctx.fill_rect(brect(rect), BCorner::ZERO, bbrush(brush));
+                ctx.fill_rect(brect(rect), BCorner::ZERO, rect_brush(brush, rect));
             }
             DrawOp::StrokeRect { rect, stroke } => {
-                ctx.stroke_path(&BPath::rect(brect(rect)), &bstroke(stroke), bbrush(&stroke.brush));
+                ctx.stroke_path(&BPath::rect(brect(rect)), &bstroke(stroke), rect_brush(&stroke.brush, rect));
             }
             DrawOp::FillRoundRect { rect, radius, brush } => {
-                ctx.fill_rect(brect(rect), BCorner::new(*radius, *radius, *radius, *radius), bbrush(brush));
+                ctx.fill_rect(
+                    brect(rect),
+                    BCorner::new(*radius, *radius, *radius, *radius),
+                    rect_brush(brush, rect),
+                );
             }
             DrawOp::StrokeRoundRect { rect, stroke, .. } => {
-                ctx.stroke_path(&BPath::rect(brect(rect)), &bstroke(stroke), bbrush(&stroke.brush));
+                ctx.stroke_path(&BPath::rect(brect(rect)), &bstroke(stroke), rect_brush(&stroke.brush, rect));
             }
             DrawOp::FillCircle { center, radius, brush } => {
-                ctx.fill_circle(bpoint(center), *radius, bbrush(brush));
+                let b = canvas_brush(brush, center.x - radius, center.y - radius, radius * 2.0, radius * 2.0);
+                ctx.fill_circle(bpoint(center), *radius, b);
             }
             DrawOp::StrokeCircle { center, radius, stroke } => {
-                ctx.stroke_circle(bpoint(center), *radius, &bstroke(stroke), bbrush(&stroke.brush));
+                let b = canvas_brush(&stroke.brush, center.x - radius, center.y - radius, radius * 2.0, radius * 2.0);
+                ctx.stroke_circle(bpoint(center), *radius, &bstroke(stroke), b);
             }
-            DrawOp::FillEllipse { center, rx, brush, .. } => {
-                ctx.fill_circle(bpoint(center), *rx, bbrush(brush));
+            DrawOp::FillEllipse { center, rx, ry, brush } => {
+                let b = canvas_brush(brush, center.x - rx, center.y - ry, rx * 2.0, ry * 2.0);
+                // No native ellipse primitive: scale a unit circle path.
+                let mut p = BPath::new();
+                let n = 48;
+                for i in 0..=n {
+                    let t = std::f32::consts::TAU * (i as f32 / n as f32);
+                    let (x, y) = (center.x + rx * t.cos(), center.y + ry * t.sin());
+                    p = if i == 0 { p.move_to(x, y) } else { p.line_to(x, y) };
+                }
+                ctx.fill_path(&p.close(), b);
             }
             DrawOp::Line { from, to, stroke } => {
-                ctx.stroke_path(&BPath::line(bpoint(from), bpoint(to)), &bstroke(stroke), bbrush(&stroke.brush));
+                let (x, y, w, h) = points_bbox(&[*from, *to]);
+                ctx.stroke_path(&BPath::line(bpoint(from), bpoint(to)), &bstroke(stroke), canvas_brush(&stroke.brush, x, y, w, h));
             }
             DrawOp::Polyline { points, stroke } => {
                 if let Some(first) = points.first() {
@@ -461,7 +851,8 @@ fn replay(ctx: &mut dyn DrawContext, bounds: CanvasBounds, ops: &[DrawOp]) {
                     for pt in &points[1..] {
                         p = p.line_to(pt.x, pt.y);
                     }
-                    ctx.stroke_path(&p, &bstroke(stroke), bbrush(&stroke.brush));
+                    let (x, y, w, h) = points_bbox(points);
+                    ctx.stroke_path(&p, &bstroke(stroke), canvas_brush(&stroke.brush, x, y, w, h));
                 }
             }
             DrawOp::Polygon { points, brush } => {
@@ -470,27 +861,97 @@ fn replay(ctx: &mut dyn DrawContext, bounds: CanvasBounds, ops: &[DrawOp]) {
                     for pt in &points[1..] {
                         p = p.line_to(pt.x, pt.y);
                     }
-                    ctx.fill_path(&p.close(), bbrush(brush));
+                    let (x, y, w, h) = points_bbox(points);
+                    ctx.fill_path(&p.close(), canvas_brush(brush, x, y, w, h));
                 }
             }
             DrawOp::FillPath { segments, brush } => {
-                ctx.fill_path(&bpath(segments), bbrush(brush));
+                let (x, y, w, h) = seg_bbox(segments);
+                ctx.fill_path(&bpath(segments), canvas_brush(brush, x, y, w, h));
             }
             DrawOp::StrokePath { segments, stroke } => {
-                ctx.stroke_path(&bpath(segments), &bstroke(stroke), bbrush(&stroke.brush));
+                let (x, y, w, h) = seg_bbox(segments);
+                ctx.stroke_path(&bpath(segments), &bstroke(stroke), canvas_brush(&stroke.brush, x, y, w, h));
+            }
+            DrawOp::Arc { center, radius, start_angle, end_angle, brush, stroke } => {
+                let n = 48;
+                let (bx, by, bw, bh) = (center.x - radius, center.y - radius, radius * 2.0, radius * 2.0);
+                let arc_pts = |path: BPath, with_center: bool| {
+                    let mut p = path;
+                    if with_center {
+                        p = p.move_to(center.x, center.y);
+                    }
+                    for i in 0..=n {
+                        let t = start_angle + (end_angle - start_angle) * (i as f32 / n as f32);
+                        let (x, y) = (center.x + radius * t.cos(), center.y + radius * t.sin());
+                        p = if i == 0 && !with_center { p.move_to(x, y) } else { p.line_to(x, y) };
+                    }
+                    p
+                };
+                if let Some(b) = brush {
+                    ctx.fill_path(&arc_pts(BPath::new(), true).close(), canvas_brush(b, bx, by, bw, bh));
+                }
+                if let Some(s) = stroke {
+                    ctx.stroke_path(&arc_pts(BPath::new(), false), &bstroke(s), canvas_brush(&s.brush, bx, by, bw, bh));
+                }
             }
             DrawOp::Text { text, at, size, color, .. } => {
                 ctx.draw_text(text, bpoint(at), &BTextStyle::new(*size).with_color(bcolor(*color)));
             }
-            DrawOp::Save => ctx.push_transform(BTransform::identity()),
-            DrawOp::Restore => ctx.pop_transform(),
-            DrawOp::Translate { x, y } => ctx.push_transform(BTransform::translate(*x, *y)),
-            DrawOp::Scale { x, y } => ctx.push_transform(BTransform::scale(*x, *y)),
-            DrawOp::Rotate { degrees } => {
-                ctx.push_transform(BTransform::rotate(degrees.to_radians()))
+            DrawOp::Image { .. } => { /* needs an asset loader; tracked separately */ }
+            DrawOp::Save => frames.push([0, 0, 0]),
+            DrawOp::Restore => {
+                if frames.len() > 1 {
+                    let f = frames.pop().unwrap();
+                    for _ in 0..f[0] {
+                        ctx.pop_transform();
+                    }
+                    for _ in 0..f[1] {
+                        ctx.pop_clip();
+                    }
+                    for _ in 0..f[2] {
+                        ctx.pop_opacity();
+                    }
+                }
             }
-            // Arc, image, and clip ops are mapped as the bridge matures.
-            _ => {}
+            DrawOp::Translate { x, y } => {
+                ctx.push_transform(BTransform::translate(*x, *y));
+                bump(&mut frames, 0);
+            }
+            DrawOp::Scale { x, y } => {
+                ctx.push_transform(BTransform::scale(*x, *y));
+                bump(&mut frames, 0);
+            }
+            DrawOp::Rotate { degrees } => {
+                ctx.push_transform(BTransform::rotate(degrees.to_radians()));
+                bump(&mut frames, 0);
+            }
+            DrawOp::ClipRect { rect } => {
+                ctx.push_clip(ClipShape::rect(brect(rect)));
+                bump(&mut frames, 1);
+            }
+            DrawOp::ClipPath { segments } => {
+                ctx.push_clip(ClipShape::Path(bpath(segments)));
+                bump(&mut frames, 1);
+            }
+            DrawOp::GlobalAlpha { alpha } => {
+                ctx.push_opacity(*alpha);
+                bump(&mut frames, 2);
+            }
+        }
+    }
+
+    // Flush anything still pushed (including the base frame) so canvas state
+    // never leaks between frames.
+    while let Some(f) = frames.pop() {
+        for _ in 0..f[0] {
+            ctx.pop_transform();
+        }
+        for _ in 0..f[1] {
+            ctx.pop_clip();
+        }
+        for _ in 0..f[2] {
+            ctx.pop_opacity();
         }
     }
 }

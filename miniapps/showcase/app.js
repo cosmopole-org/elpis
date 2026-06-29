@@ -13,10 +13,23 @@ function header() {
       padding: { top: 16, right: 20, bottom: 16, left: 20 },
       align_items: "center",
       justify_content: "between",
-      background: solid(rgb(0.10, 0.11, 0.16))
+      background: {
+        kind: "linear_gradient",
+        angle: 90,
+        stops: [
+          { offset: 0, color: rgb(0.10, 0.11, 0.16) },
+          { offset: 1, color: rgb(0.16, 0.13, 0.22) }
+        ]
+      }
     },
     children: [
-      text("Elpis · Blinc Showcase", { size: 22, weight: "bold", foreground: rgb(0.9, 0.9, 1.0) }),
+      row({
+        style: { gap: 10, align_items: "center" },
+        children: [
+          icon("E", { size: 28, color: rgb(0.4, 0.8, 1.0) }),
+          text("Elpis · Blinc Showcase", { size: 22, weight: "bold", foreground: rgb(0.9, 0.9, 1.0) })
+        ]
+      }),
       row({
         style: { gap: 8 },
         children: [

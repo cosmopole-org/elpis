@@ -18,9 +18,14 @@ use elpis_blinc::{BlincBackend, Sandbox, SandboxConfig, SurfaceInfo};
 /// The demo Miniapp, bundled into the wasm artifact.
 const MINIAPP: &str = include_str!("../../../miniapps/showcase/app.js");
 
-/// An OFL-licensed font bundled so text shapes in the browser (browsers don't
-/// expose system fonts to the WebGPU pipeline).
-const FONT: &[u8] = include_bytes!("../assets/FiraCode-Regular.ttf");
+/// Fonts bundled so text shapes in the browser (browsers don't expose system
+/// fonts to the WebGPU pipeline). DejaVu Sans is the **sans-serif** family the
+/// default text path resolves to — without a registered sans-serif face Blinc's
+/// generic resolution finds nothing and every default text element renders
+/// blank. Fira Code provides a **monospace** family.
+const FONT_SANS: &[u8] = include_bytes!("../assets/DejaVuSans.ttf");
+const FONT_SANS_BOLD: &[u8] = include_bytes!("../assets/DejaVuSans-Bold.ttf");
+const FONT_MONO: &[u8] = include_bytes!("../assets/FiraCode-Regular.ttf");
 
 /// Canvas element id the page must provide.
 const CANVAS_ID: &str = "elpis-canvas";
@@ -48,13 +53,17 @@ async fn run() -> Result<(), String> {
     sandbox.boot()?;
 
     // 2. Hand Blinc's WebApp the shared per-frame closure. `run_with_setup`
-    //    registers the bundled font before the first frame so text shapes.
+    //    registers the bundled fonts before the first frame so text shapes. We
+    //    register a sans-serif family (regular + bold) AND a monospace family so
+    //    both the default text path and any monospace text resolve a face.
     use blinc_app::web::WebApp;
-    let font = FONT.to_vec();
     WebApp::run_with_setup(
         CANVAS_ID,
         move |app| {
-            let faces = app.load_font_data(font.clone());
+            let mut faces = 0;
+            faces += app.load_font_data(FONT_SANS.to_vec());
+            faces += app.load_font_data(FONT_SANS_BOLD.to_vec());
+            faces += app.load_font_data(FONT_MONO.to_vec());
             web_sys::console::log_1(&format!("elpis-web: registered {faces} font face(s)").into());
         },
         elpis_blinc::frame_closure(sandbox, shared),

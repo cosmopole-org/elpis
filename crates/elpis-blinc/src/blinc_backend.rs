@@ -1165,11 +1165,22 @@ pub fn frame_closure(
             Some(dom) => build(dom, &shared),
             None => Box::new(div()),
         };
+        // Lay the guest's view inside a full-width column so it fills the
+        // viewport horizontally (the root `div` is a flex row by default, which
+        // would otherwise shrink the content to its intrinsic width and leave
+        // the UI bunched on the left). The column's natural height then drives
+        // the vertical scroll viewport below, so content taller than the window
+        // can be scrolled into view instead of being clipped. `scroll()`
+        // auto-persists its physics per call-site, so the scroll position
+        // survives the per-frame rebuild.
+        let content = div().flex_col().w(ctx.width).child_box(inner);
+        let scroller = scroll().w(ctx.width).h(ctx.height).content(content);
         div()
+            .flex_col()
             .w(ctx.width)
             .h(ctx.height)
             .bg(BColor::rgba(0.05, 0.05, 0.07, 1.0))
-            .child_box(inner)
+            .child(scroller)
     }
 }
 

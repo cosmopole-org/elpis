@@ -640,10 +640,40 @@ fn bfit(f: ImageFit) -> ObjectFit {
     }
 }
 
-/// A short glyph for an icon name (first character) until icon-set lookup is
-/// wired through `blinc_tabler_icons`.
+/// A short glyph for an icon name. The real icon set isn't wired through
+/// `blinc_tabler_icons` yet, so map the common names to Unicode symbols the
+/// bundled fonts (DejaVu Sans) reliably contain — directional carets, steppers,
+/// stars, trends, etc. — and fall back to the uppercased first character for
+/// anything unmapped (so unknown icons still read as a sensible placeholder).
 fn short_icon(name: &str) -> String {
-    name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "•".to_string())
+    let glyph = match name {
+        "chevron-left" | "arrow-left" | "back" | "prev" | "left" => "\u{25C0}", // ◀
+        "chevron-right" | "arrow-right" | "next" | "forward" | "right" => "\u{25B6}", // ▶
+        "chevron-up" | "arrow-up" | "up" | "collapse" => "\u{25B2}", // ▲
+        "chevron-down" | "arrow-down" | "down" | "expand" | "caret" => "\u{25BC}", // ▼
+        "plus" | "add" | "new" => "+",
+        "minus" | "remove" | "subtract" => "\u{2212}", // −
+        "x" | "close" | "cancel" | "dismiss" => "\u{00D7}", // ×
+        "check" | "done" | "ok" => "\u{2713}",         // ✓
+        "star" => "\u{2606}",                          // ☆
+        "star-filled" | "starred" | "favorite" => "\u{2605}", // ★
+        "circle" | "dot" => "\u{25CF}",                // ●
+        "trending-up" | "arrow-up-right" => "\u{2197}", // ↗
+        "trending-down" | "arrow-down-right" => "\u{2198}", // ↘
+        "play" => "\u{25B6}",                          // ▶
+        "pause" => "\u{2016}",                         // ‖
+        "heart" | "like" => "\u{2665}",                // ♥
+        "info" | "info-circle" => "i",
+        "alert-triangle" | "alert-circle" | "warning" | "error" => "!",
+        _ => {
+            return name
+                .chars()
+                .next()
+                .map(|c| c.to_uppercase().to_string())
+                .unwrap_or_else(|| "\u{2022}".to_string());
+        }
+    };
+    glyph.to_string()
 }
 
 /// Minimal markdown: a column where `#`-prefixed lines become headings, `-`

@@ -219,19 +219,37 @@ Glass.divider = function (o) {
 };
 
 // The app root: a full-bleed gradient backdrop with the content laid over it.
-// Liquid glass only reads as glass against a colorful, textured background.
+// Liquid glass only reads as glass against a colorful, textured background, so
+// pass `backdrop: true` to layer an animated colour wash (Glass.backdrop)
+// *behind* the content for the glass surfaces to refract. `maxWidth` caps the
+// content column and centres it, so the UI stays comfortably narrow on wide
+// screens while going full-bleed on phones.
+//
+//   opts: background?, backdrop?, animated?, phase?, maxWidth?, padding?, gap?
 Glass.screen = function (o) {
   o = Glass._opt(o);
   var t = Glass.tokens;
   var bg = has(o, "background") ? o.background
     : linearGradient(135, [ stop(0, t.bg0), stop(0.55, t.bg1), stop(1, t.bg2) ]);
-  var st = {
+  var colSt = {
     width: Glass._len("full"), height: Glass._len("full"),
-    background: bg, padding: Glass._edges(Glass._d(o, "padding", t.space.lg)),
+    padding: Glass._edges(Glass._d(o, "padding", t.space.lg)),
     gap: Glass._d(o, "gap", t.space.lg)
   };
-  var n = column({ style: st, children: Glass._kids(o) });
-  return Glass._fin(n, o);
+  if (has(o, "maxWidth")) { colSt.max_width = Glass._len(o.maxWidth); colSt.align_self = "center"; }
+  if (!Glass._d(o, "backdrop", false)) {
+    // No separate backdrop: the gradient lives on the content column itself.
+    colSt.background = bg;
+    return Glass._fin(column({ style: colSt, children: Glass._kids(o) }), o);
+  }
+  // Backdrop mode: a full-bleed colour wash underneath a transparent content
+  // column, stacked so the glass reads against the moving colour behind it.
+  var content = column({ style: colSt, children: Glass._kids(o) });
+  var bd = Glass.backdrop({ background: bg, phase: Glass._d(o, "phase", 0), animated: Glass._d(o, "animated", true) });
+  var root = stack({ style: { width: Glass._len("full"), height: Glass._len("full"),
+                              background: solid(t.bg0), overflow_x: "hidden", overflow_y: "hidden" },
+                     children: [ bd, content ] });
+  return Glass._fin(root, o);
 };
 
 // ===========================================================================
@@ -1172,26 +1190,54 @@ Glass.gauge = function (o) {
 // Decorative
 // ===========================================================================
 
-// A soft "liquid blob" backdrop drawn on a canvas — animate by passing a
-// phase that shifts each frame.
+// A soft "liquid blob" wash drawn on a canvas — animate by passing a phase that
+// shifts each frame. Radii and drift scale with the canvas, so the same blob
+// reads well as a tiny banner or a full-bleed screen backdrop, and each blob is
+// a radial gradient (opaque core fading to nothing) for a soft, liquid look.
 Glass.blob = function (o) {
   o = Glass._opt(o);
   var t = Glass.tokens;
   var w = Glass._d(o, "width", 480); var h = Glass._d(o, "height", 320);
+  var base = (w < h) ? w : h;
   var phase = Glass._d(o, "phase", 0);
   var ops = [ { type: "clear", color: rgba(0, 0, 0, 0) } ];
   var blobs = [
-    { cx: w * 0.3, cy: h * 0.35, r: 120, c: t.accent },
-    { cx: w * 0.7, cy: h * 0.6, r: 150, c: t.accent2 },
-    { cx: w * 0.5, cy: h * 0.5, r: 90, c: t.info }
+    { cx: w * 0.28, cy: h * 0.30, r: base * 0.46, c: t.accent },
+    { cx: w * 0.74, cy: h * 0.64, r: base * 0.55, c: t.accent2 },
+    { cx: w * 0.52, cy: h * 0.46, r: base * 0.36, c: t.info }
   ];
+  var soft = function (c) {
+    return radialGradient([ stop(0, withAlpha(c, 0.55)), stop(0.65, withAlpha(c, 0.22)), stop(1, withAlpha(c, 0)) ]);
+  };
   for (var i = 0; i < len(blobs); i = i + 1) {
     var b = blobs[i];
-    var dx = sin(phase + i) * 30; var dy = cos(phase * 0.8 + i) * 24;
-    push(ops, { type: "fill_circle", center: { x: b.cx + dx, y: b.cy + dy }, radius: b.r, brush: solid(withAlpha(b.c, 0.5)) });
+    var dx = sin(phase + i) * base * 0.06; var dy = cos(phase * 0.8 + i) * base * 0.05;
+    push(ops, { type: "fill_circle", center: { x: b.cx + dx, y: b.cy + dy }, radius: b.r, brush: soft(b.c) });
   }
   return Glass._fin(canvas(ops, { animated: Glass._d(o, "animated", false),
                                   style: { width: Glass._len(w), height: Glass._len(h), overflow_x: "hidden", overflow_y: "hidden" } }), o);
+};
+
+// A full-bleed backdrop: a base gradient with the liquid blob wash floating
+// over it, sized to fill its parent. Drop it behind a screen's content (e.g.
+// the first child of a Glass.stack, or via `Glass.screen({ backdrop: true })`)
+// so every glass surface has a colourful, textured background to refract.
+//
+//   opts: background?, phase?, animated?, blobs?, width?, height?
+Glass.backdrop = function (o) {
+  o = Glass._opt(o);
+  var t = Glass.tokens;
+  var grad = has(o, "background") ? o.background
+    : linearGradient(135, [ stop(0, t.bg0), stop(0.55, t.bg1), stop(1, t.bg2) ]);
+  var full = Glass._len("full");
+  var layers = [ div({ style: { width: full, height: full, background: grad } }) ];
+  if (Glass._d(o, "blobs", true)) {
+    var w = Glass._d(o, "width", 1280); var h = Glass._d(o, "height", 1280);
+    push(layers, column({ style: { width: full, height: full, align_items: "center", justify_content: "center",
+                                   overflow_x: "hidden", overflow_y: "hidden" },
+      children: [ Glass.blob({ width: w, height: h, phase: Glass._d(o, "phase", 0), animated: Glass._d(o, "animated", true) }) ] }));
+  }
+  return Glass._fin(stack({ style: { width: full, height: full, overflow_x: "hidden", overflow_y: "hidden" }, children: layers }), o);
 };
 
 // A radial glow halo behind a focal element.

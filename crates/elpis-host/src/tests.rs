@@ -112,6 +112,103 @@ fn invalid_js_fails_to_construct() {
     assert!(res.is_err());
 }
 
+// ---- Glass UI kit ---------------------------------------------------------
+//
+// The kit is plain JS prepended ahead of a Miniapp (the `--lib` path the host
+// binary uses). These tests prove the whole SDK compiles on the Elpian VM,
+// boots, renders a real glass tree, and survives event dispatch — i.e. that
+// "covers everything and any widget" actually executes in the sandbox.
+
+/// The Glass UI kit SDK source (the same file shipped under `sdk/`).
+const GLASS_KIT: &str = include_str!("../../../sdk/glass-ui-kit.js");
+/// The gallery Miniapp that exercises the kit.
+const GLASS_GALLERY: &str = include_str!("../../../miniapps/glass-gallery/app.js");
+
+/// Boot a Miniapp with the Glass kit prepended (mirrors `elpis --lib`).
+fn boot_with_kit(app: &str) -> Sandbox {
+    let source = format!("{GLASS_KIT}\n// ---- app ----\n{app}");
+    boot(&source)
+}
+
+#[test]
+fn glass_kit_compiles_and_renders_components() {
+    // A driver that touches a broad slice of the kit's families: layout,
+    // typography, glass surfaces, actions, inputs, navigation, feedback,
+    // data display, and a chart.
+    let driver = r#"
+        function view() {
+          return Glass.screen({ children: [
+            Glass.navbar({ title: "Kit", trailing: [ Glass.iconButton({ icon: "plus", onClick: "noop" }) ] }),
+            Glass.hero({ title: "Hello", subtitle: "Liquid glass" }),
+            Glass.row({ gap: 8, children: [
+              Glass.button({ label: "Primary", variant: "accent", onClick: "noop" }),
+              Glass.button({ label: "Ghost", variant: "ghost", onClick: "noop" }),
+              Glass.chip({ label: "Tag" }), Glass.badge({ text: "9" })
+            ]}),
+            Glass.field({ label: "Name", control: Glass.textField({ placeholder: "you" }) }),
+            Glass.toggle({ checked: true, onChange: "t" }),
+            Glass.slider({ value: 0.5, onChange: "s" }),
+            Glass.list({ items: [ { title: "One", chevron: true }, { title: "Two", chevron: true } ] }),
+            Glass.stat({ label: "Revenue", value: "$10k", delta: "5%", deltaUp: true }),
+            Glass.alert({ kind: "success", title: "Saved", message: "ok" }),
+            Glass.ring({ value: 0.7, size: 100 }),
+            Glass.gauge({ value: 0.4, size: 120 }),
+            Glass.barChart({ data: [1, 4, 2, 6, 3], width: 200, height: 80 }),
+            Glass.lineChart({ data: [1, 3, 2, 5], width: 200, height: 80 }),
+            Glass.tabBar({ items: [ { icon: "a", label: "A" }, { icon: "b", label: "B" } ], selected: 0, onSelect: "tab" })
+          ]});
+        }
+        render(view());
+    "#;
+    let sb = boot_with_kit(driver);
+    assert_eq!(sb.frames(), 1, "kit driver should render one frame");
+    let json = tree_json(&sb);
+    // Glass surfaces lower to a material; the kit emits glass_material.
+    assert!(json.contains("glass_material"), "no glass material in tree: {json}");
+    assert!(json.contains("Primary"), "button label missing");
+    assert!(json.contains("\"type\":\"canvas\""), "bar chart canvas missing");
+    assert!(json.contains("\"type\":\"text_input\""), "text field missing");
+}
+
+#[test]
+fn glass_gallery_boots_and_handles_events() {
+    let mut sb = boot_with_kit(GLASS_GALLERY);
+    assert_eq!(sb.frames(), 1, "gallery should render its first frame");
+    assert!(tree_json(&sb).contains("Liquid Glass"), "hero title missing");
+
+    // Switch to the Inputs tab (handler id "tab:1") and confirm a re-render
+    // that doesn't trap.
+    sb.dispatch_event(&UiEvent::new("tab:1", "click", Value::Null)).unwrap();
+    assert!(sb.frames() >= 2, "tab switch should re-render");
+    assert!(tree_contains(&sb, "Notifications"), "inputs tab content missing");
+
+    // Walk every section: each tab must re-render (frames advance) without a
+    // trap. This catches a single broken component aborting a whole render
+    // (e.g. a malformed canvas op silently dropping the frame).
+    let sections = ["tab:0", "tab:1", "tab:2", "tab:3", "tab:4", "tab:5"];
+    for (i, id) in sections.iter().enumerate() {
+        let before = sb.frames();
+        sb.dispatch_event(&UiEvent::new(*id, "click", Value::Null)).unwrap();
+        assert!(sb.frames() > before, "section {id} did not re-render (component {i} aborted the frame?)");
+    }
+    // The charts section renders ring/gauge/bar/line canvases.
+    assert!(tree_json(&sb).contains("\"type\":\"canvas\""), "charts canvases missing");
+
+    // Drive animation frames (blob wallpaper + 3D scene) — must not trap.
+    sb.tick(16.0).unwrap();
+    sb.tick(16.0).unwrap();
+
+    // Open the modal overlay.
+    sb.dispatch_event(&UiEvent::new("tab:3", "click", Value::Null)).unwrap();
+    sb.dispatch_event(&UiEvent::new("openModal", "click", Value::Null)).unwrap();
+    assert!(tree_json(&sb).contains("Liquid Glass Dialog"), "modal did not open");
+}
+
+/// Small helper: does the retained tree's JSON contain `needle`?
+fn tree_contains(sb: &Sandbox, needle: &str) -> bool {
+    tree_json(sb).contains(needle)
+}
+
 #[test]
 fn diff_minimizes_work_on_text_only_change() {
     // Two renders that differ only in the text node should not remount.

@@ -238,6 +238,42 @@ fn resolve_style(s: &Style, kind: &NodeKind) -> BlincStyle {
     b.cursor = s.cursor.clone();
     b.classes = s.classes.clone();
     b.css = s.css.clone();
+
+    // Expand a liquid-glass material into concrete paint. Each piece is only
+    // filled when the guest didn't set the corresponding field explicitly, so
+    // a Miniapp can always override one aspect (e.g. a custom background) while
+    // keeping the rest of the glass look.
+    if let Some(g) = &s.glass_material {
+        b.glass = true;
+        let f = b.filter.get_or_insert(Filter::default());
+        if f.backdrop_blur == 0.0 {
+            f.backdrop_blur = g.blur;
+        }
+        if f.saturate.is_none() {
+            f.saturate = Some(g.saturate);
+        }
+        if f.brightness.is_none() && (g.brightness - 1.0).abs() > f32::EPSILON {
+            f.brightness = Some(g.brightness);
+        }
+        if b.background.is_none() {
+            b.background = Some(Brush::solid(g.tint));
+        }
+        if b.border.is_none() && g.rim_width > 0.0 {
+            b.border = Some((g.rim_width, g.rim));
+        }
+        if b.radius.is_none() && g.radius > 0.0 {
+            b.radius = Some(CornerRadius::all(g.radius));
+        }
+        if g.elevation > 0.0 && b.shadows.is_empty() {
+            b.shadows.push(Shadow {
+                offset: [0.0, g.elevation * 0.4],
+                blur: g.elevation,
+                spread: 0.0,
+                color: Color::rgba(0.0, 0.0, 0.0, 0.28),
+                inset: false,
+            });
+        }
+    }
     b
 }
 
@@ -356,6 +392,32 @@ mod tests {
             dismissible: true,
         })));
         assert_eq!(dom.style.position, Some(Position::Fixed));
+    }
+
+    #[test]
+    fn glass_material_expands_to_concrete_paint() {
+        let mut n = Node::new(NodeKind::Div);
+        n.style.glass_material = Some(GlassMaterial { elevation: 24.0, ..GlassMaterial::default() });
+        let dom = lower(&n);
+        assert!(dom.style.glass, "glass flag set");
+        let f = dom.style.filter.expect("filter synthesized");
+        assert!(f.backdrop_blur > 0.0, "backdrop blur applied");
+        assert!(f.saturate.is_some(), "saturation applied");
+        assert!(dom.style.background.is_some(), "tint background applied");
+        assert!(dom.style.border.is_some(), "specular rim applied");
+        assert!(dom.style.radius.is_some(), "radius applied");
+        assert_eq!(dom.style.shadows.len(), 1, "elevation shadow applied");
+    }
+
+    #[test]
+    fn glass_material_does_not_clobber_explicit_fields() {
+        let mut n = Node::new(NodeKind::Div);
+        n.style.glass_material = Some(GlassMaterial::default());
+        n.style.background = Some(Brush::solid(Color::BLACK));
+        let dom = lower(&n);
+        // The explicit background wins; glass only fills the gaps.
+        assert_eq!(dom.style.background, Some(Brush::solid(Color::BLACK)));
+        assert!(dom.style.glass);
     }
 
     /// Every kind must lower without panicking and to the expected content

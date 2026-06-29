@@ -31,6 +31,8 @@ const DEFAULT_MINIAPP: &str = include_str!("../../../miniapps/showcase/app.js");
 
 struct Args {
     path: Option<String>,
+    /// Library/SDK JS files prepended (in order) before the main Miniapp.
+    libs: Vec<String>,
     #[cfg_attr(feature = "blinc", allow(dead_code))]
     events: Vec<String>,
     #[cfg_attr(feature = "blinc", allow(dead_code))]
@@ -39,11 +41,17 @@ struct Args {
 
 fn parse_args() -> Args {
     let mut path = None;
+    let mut libs = Vec::new();
     let mut events = Vec::new();
     let mut ticks = 0u32;
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
+            "--lib" | "-l" => {
+                if let Some(p) = it.next() {
+                    libs.push(p);
+                }
+            }
             "--event" | "-e" => {
                 if let Some(id) = it.next() {
                     events.push(id);
@@ -60,23 +68,44 @@ fn parse_args() -> Args {
             _ => {}
         }
     }
-    Args { path, events, ticks }
+    Args { path, libs, events, ticks }
 }
 
 fn print_help() {
     println!(
         "elpis — run a sandboxed Miniapp on the elpian-vm + Blinc\n\n\
-         USAGE:\n  elpis [MINIAPP.js] [--event ID]... [--ticks N]\n\n\
+         USAGE:\n  elpis [MINIAPP.js] [--lib LIB.js]... [--event ID]... [--ticks N]\n\n\
          OPTIONS:\n  \
+         -l, --lib FILE   Prepend a library/SDK JS file before the Miniapp\n  \
+         \x20                 (repeatable; the in-sandbox way to reuse an SDK such\n  \
+         \x20                 as the Glass UI kit, since module import is denied)\n  \
          -e, --event ID   Dispatch a UI event to handler ID (repeatable)\n  \
          -t, --ticks N    Drive N animation frames after booting\n  \
          -h, --help       Show this help\n\n\
+         EXAMPLE:\n  \
+         elpis --lib sdk/glass-ui-kit.js miniapps/glass-gallery/app.js\n\n\
          Build with `--features blinc` to open a real Blinc window instead."
     );
 }
 
 fn load_source(args: &Args) -> (String, String) {
-    match &args.path {
+    // Concatenate any --lib sources ahead of the main Miniapp. The host then
+    // prepends the UI prelude, so the guest sees: prelude + libs + app. This is
+    // how a reusable SDK (e.g. the Glass UI kit) is shared without the
+    // sandbox's denied module-import capability.
+    let mut prefix = String::new();
+    for lib in &args.libs {
+        match std::fs::read_to_string(lib) {
+            Ok(src) => {
+                prefix.push_str(&format!("// ---- lib: {lib} ----\n"));
+                prefix.push_str(&src);
+                prefix.push('\n');
+            }
+            Err(e) => eprintln!("could not read lib '{lib}': {e}; skipping"),
+        }
+    }
+
+    let (name, main) = match &args.path {
         Some(p) => match std::fs::read_to_string(p) {
             Ok(src) => (p.clone(), src),
             Err(e) => {
@@ -85,6 +114,12 @@ fn load_source(args: &Args) -> (String, String) {
             }
         },
         None => ("<bundled showcase>".to_string(), DEFAULT_MINIAPP.to_string()),
+    };
+
+    if prefix.is_empty() {
+        (name, main)
+    } else {
+        (name, format!("{prefix}// ---- miniapp ----\n{main}"))
     }
 }
 

@@ -16,7 +16,7 @@
 //! pushes UI events into a shared queue the host drains on the next frame.
 #![cfg(feature = "blinc-backend")]
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use serde_json::Value;
@@ -39,7 +39,7 @@ use blinc_layout::text::{text as btext, Text};
 use elpis_protocol::canvas::{
     CanvasSpec, DrawOp, LineCap, LineJoin, PathSeg, Point as PPoint, Rect as PRect, Stroke as PStroke,
 };
-use elpis_protocol::node::{FontWeight, ProgressSpec, SpinnerSpec, TextAlign, TextSpec};
+use elpis_protocol::node::{FontWeight, NodeKind, ProgressSpec, SpinnerSpec, TextAlign, TextSpec};
 use elpis_protocol::scene3d::Scene3DSpec;
 use elpis_protocol::style::ImageFit;
 
@@ -61,6 +61,10 @@ pub struct BlincShared {
     pub events: Rc<RefCell<Vec<UiEvent>>>,
     /// Imperative backend commands the guest issued (router/media/etc.).
     pub commands: Rc<RefCell<Vec<(String, Vec<Value>)>>>,
+    /// Whether the current tree wants per-frame ticks (an animated canvas /
+    /// scene, or a node carrying animations). When set, the run loop drives the
+    /// guest's `onTick` and keeps requesting frames so animation is continuous.
+    pub animated: Rc<Cell<bool>>,
 }
 
 /// The [`UiBackend`] implementation that feeds Blinc.
@@ -77,8 +81,18 @@ impl BlincBackend {
     }
 
     fn store(&mut self, tree: &Node) {
+        self.shared.animated.set(tree_wants_animation(tree));
         *self.shared.dom.borrow_mut() = Some(lower(tree));
     }
+}
+
+/// Whether a node tree wants per-frame animation: an animated canvas/scene, or
+/// any node carrying declarative animations.
+fn tree_wants_animation(node: &Node) -> bool {
+    let here = !node.animations.is_empty()
+        || matches!(&node.kind, NodeKind::Canvas(c) if c.animated)
+        || matches!(&node.kind, NodeKind::Scene3D(s) if s.animated);
+    here || node.children.iter().any(tree_wants_animation)
 }
 
 impl UiBackend for BlincBackend {
@@ -964,6 +978,13 @@ fn wire_events(mut d: Div, dom: &BlincDom, shared: &BlincShared) -> Div {
         let events = shared.events.clone();
         d = d.on_click(move |_| {
             events.borrow_mut().push(UiEvent::click(handler.clone()));
+            // Blinc only re-invokes the build closure when the tree is marked
+            // dirty (otherwise it just repaints the retained tree, so the
+            // queued event would never reach the guest until the next resize).
+            // `request_full_rebuild` sets the rebuild + relayout flags and
+            // schedules a redraw, so the next frame drains the event, runs the
+            // guest's `onEvent`, and paints the new tree.
+            blinc_layout::widgets::request_full_rebuild();
         });
     }
     d
@@ -987,10 +1008,19 @@ pub fn frame_closure(
     let sandbox = Rc::new(RefCell::new(sandbox));
     move |ctx: &mut WindowedContext| {
         let pending: Vec<UiEvent> = std::mem::take(&mut shared.events.borrow_mut());
-        if !pending.is_empty() {
+        let animated = shared.animated.get();
+        if !pending.is_empty() || animated {
             let mut sb = sandbox.borrow_mut();
             for ev in pending {
                 let _ = sb.dispatch_event(&ev);
+            }
+            // Drive one animation frame for trees that want it (animated canvas
+            // / 3D scene), then ask Blinc to rebuild again next frame so the
+            // animation runs continuously. Idle trees skip this entirely, so
+            // the UI stays on-demand and cheap when nothing is moving.
+            if animated {
+                let _ = sb.tick(16.0);
+                blinc_layout::widgets::request_full_rebuild();
             }
         }
         let root = shared.dom.borrow();

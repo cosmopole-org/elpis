@@ -218,35 +218,87 @@ Glass.divider = function (o) {
   return Glass._fin(div({ style: st }), o);
 };
 
-// The app root: a full-bleed gradient wallpaper with the content laid over it.
-// Liquid glass only reads as glass against colour — each glass surface
-// backdrop-blurs whatever is painted behind it, which here is this colourful
-// gradient, so different panels pick up different hues. `maxWidth` caps the
-// content and centres it (comfortably narrow on wide screens, full-bleed on
-// phones). The layout stays in normal flow — a single column — so it renders
-// identically on every Blinc backend (Blinc's `stack` is a flow container, not
-// a z-overlay, so we don't lean on z-stacking here).
+// A full-bleed wallpaper: a colourful gradient with a rich, animated field of
+// blobs painted on top, positioned absolutely so it fills the screen behind the
+// content. The blobs give the glass real, high-frequency detail to refract and
+// blur — without them, a smooth gradient blurs to itself and the glass reads as
+// flat. Drop it as the first child of a positioned (relative) parent.
 //
-//   opts: background?, maxWidth?, padding?, gap?
+//   opts: background?, phase?, animated?, width?, height?
+Glass.wallpaper = function (o) {
+  o = Glass._opt(o);
+  var t = Glass.tokens;
+  var grad = has(o, "background") ? o.background
+    : linearGradient(135, [ stop(0, hex("#16215C")), stop(0.4, hex("#3B2A78")),
+                            stop(0.72, hex("#6A2E7C")), stop(1, hex("#0D1430")) ]);
+  var w = Glass._d(o, "width", 1600); var h = Glass._d(o, "height", 1600);
+  var phase = Glass._d(o, "phase", 0);
+  var base = (w < h) ? w : h;
+  var soft = function (c) {
+    return radialGradient([ stop(0, withAlpha(c, 0.62)), stop(0.65, withAlpha(c, 0.22)), stop(1, withAlpha(c, 0)) ]);
+  };
+  // Large soft colour washes (the mood) + smaller, harder-edged bright orbs
+  // (the high-frequency detail that makes the backdrop-blur clearly visible).
+  var washes = [
+    { x: 0.20, y: 0.24, r: 0.55, c: t.accent }, { x: 0.82, y: 0.30, r: 0.60, c: t.accent2 },
+    { x: 0.55, y: 0.66, r: 0.55, c: t.info },   { x: 0.86, y: 0.82, r: 0.42, c: t.success },
+    { x: 0.14, y: 0.80, r: 0.44, c: t.warning }
+  ];
+  var orbs = [
+    { x: 0.40, y: 0.18, r: 0.10, c: t.info },    { x: 0.68, y: 0.50, r: 0.08, c: t.accent },
+    { x: 0.30, y: 0.55, r: 0.07, c: t.accent2 }, { x: 0.74, y: 0.74, r: 0.09, c: t.warning },
+    { x: 0.50, y: 0.40, r: 0.06, c: t.danger },  { x: 0.12, y: 0.46, r: 0.07, c: t.success }
+  ];
+  var ops = [ { type: "clear", color: rgba(0, 0, 0, 0) } ];
+  for (var i = 0; i < len(washes); i = i + 1) {
+    var b = washes[i];
+    var dx = sin(phase + i) * base * 0.05; var dy = cos(phase * 0.8 + i) * base * 0.04;
+    push(ops, { type: "fill_circle", center: { x: w * b.x + dx, y: h * b.y + dy }, radius: base * b.r, brush: soft(b.c) });
+  }
+  for (var j = 0; j < len(orbs); j = j + 1) {
+    var g = orbs[j];
+    var ox = sin(phase * 1.3 + j * 1.7) * base * 0.03; var oy = cos(phase + j) * base * 0.03;
+    push(ops, { type: "fill_circle", center: { x: w * g.x + ox, y: h * g.y + oy }, radius: base * g.r, brush: solid(withAlpha(g.c, 0.55)) });
+  }
+  var field = column({ style: { width: Glass._len("full"), height: Glass._len("full"),
+                                align_items: "center", justify_content: "center", overflow_x: "hidden", overflow_y: "hidden" },
+    children: [ canvas(ops, { animated: Glass._d(o, "animated", true),
+                              style: { width: Glass._len(w), height: Glass._len(h) } }) ] });
+  return Glass._fin(div({ style: { position: "absolute", inset: { top: 0, right: 0, bottom: 0, left: 0 },
+                                   width: Glass._len("full"), height: Glass._len("full"), z_index: 0,
+                                   background: grad, overflow_x: "hidden", overflow_y: "hidden" },
+                         children: [field] }), o);
+};
+
+// The app root: a full-bleed animated wallpaper with the content laid over it.
+// Liquid glass only reads as glass against colour and detail — each glass
+// surface backdrop-blurs whatever is painted behind it, which here is the
+// wallpaper (positioned absolutely behind the content, which is raised with
+// z-index so it paints on top). `maxWidth` caps the content and centres it
+// (comfortably narrow on wide screens, full-bleed on phones).
+//
+//   opts: background?, maxWidth?, padding?, gap?, phase?, animated?
 Glass.screen = function (o) {
   o = Glass._opt(o);
   var t = Glass.tokens;
-  // A saturated diagonal wallpaper (deep blue -> indigo -> violet) so the glass
-  // has real colour to refract rather than near-black.
   var bg = has(o, "background") ? o.background
     : linearGradient(135, [ stop(0, hex("#16215C")), stop(0.4, hex("#3B2A78")),
                             stop(0.72, hex("#6A2E7C")), stop(1, hex("#0D1430")) ]);
-  var gap = Glass._d(o, "gap", t.space.lg);
-  // The content column, optionally capped to a max width.
-  var inSt = { width: Glass._len("full"), height: Glass._len("full"), gap: gap };
+  var wall = Glass.wallpaper({ background: bg, phase: Glass._d(o, "phase", 0), animated: Glass._d(o, "animated", true) });
+  // The content column, raised above the wallpaper and capped to a max width.
+  // The padding lives here (not on the root) so the absolutely-positioned
+  // wallpaper stays full-bleed behind it rather than inset by the padding.
+  var inSt = { width: Glass._len("full"), height: Glass._len("full"), z_index: 1,
+               gap: Glass._d(o, "gap", t.space.lg), padding: Glass._edges(Glass._d(o, "padding", t.space.lg)) };
   if (has(o, "maxWidth")) { inSt.max_width = Glass._len(o.maxWidth); }
   var inner = column({ style: inSt, children: Glass._kids(o) });
-  // The full-bleed root, with the content centred horizontally.
+  // The full-bleed root: a positioning context for the wallpaper, with the
+  // content centred horizontally over it.
   var st = {
-    width: Glass._len("full"), height: Glass._len("full"), background: bg,
-    align_items: "center", padding: Glass._edges(Glass._d(o, "padding", t.space.lg))
+    width: Glass._len("full"), height: Glass._len("full"), position: "relative",
+    background: solid(t.bg0), align_items: "center"
   };
-  return Glass._fin(column({ style: st, children: [inner] }), o);
+  return Glass._fin(column({ style: st, children: [wall, inner] }), o);
 };
 
 // ===========================================================================

@@ -32,15 +32,11 @@ var TABS = [
 function surfacesTab() {
   return Glass.column({ gap: 16, children: [
     Glass.hero({ title: "Liquid Glass", subtitle: "A full component kit for Elpis · Blinc", children: [
-      Glass.row({ gap: 10, children: [
+      Glass.row({ gap: 10, wrap: true, children: [
         Glass.button({ label: "Get started", variant: "accent", onClick: "noop" }),
         Glass.button({ label: "Docs", variant: "ghost", onClick: "noop" })
       ]})
     ]}),
-    // An animated "liquid" blob banner (bounded + clipped so it flows inline).
-    div({ style: { radius: { tl: 22, tr: 22, br: 22, bl: 22 }, overflow_x: "hidden", overflow_y: "hidden",
-                   background: solid(Glass.tokens.bg0) },
-          children: [ Glass.blob({ width: 600, height: 180, phase: phase, animated: true }) ] }),
     Glass.row({ gap: 16, wrap: true, children: [
       Glass.card({ variant: "regular", children: [ Glass.title({ text: "Regular" }), Glass.subtitle({ text: "Frosted surface" }) ]}),
       Glass.card({ variant: "thin", children: [ Glass.title({ text: "Thin" }), Glass.subtitle({ text: "Subtle blur" }) ]}),
@@ -138,10 +134,10 @@ function chartsTab() {
     ]}),
     Glass.card({ children: [
       Glass.title({ text: "Bar chart" }),
-      Glass.barChart({ data: [3, 7, 4, 9, 6, 8, 5], width: 360, height: 160 }) ]}),
+      Glass.barChart({ data: [3, 7, 4, 9, 6, 8, 5], width: 300, height: 150 }) ]}),
     Glass.card({ children: [
       Glass.title({ text: "Line chart" }),
-      Glass.lineChart({ data: [2, 5, 3, 8, 6, 9, 7, 10], width: 360, height: 120 }) ]})
+      Glass.lineChart({ data: [2, 5, 3, 8, 6, 9, 7, 10], width: 300, height: 120 }) ]})
   ]});
 }
 
@@ -174,10 +170,10 @@ function body() {
 }
 
 function view() {
-  // A single top-to-bottom column: the screen's gradient is the liquid-glass
-  // backdrop, with the glass navbar, scrolling body and tab bar layered over
-  // it. (We keep the layout in normal flow rather than an absolutely
-  // positioned stack so it renders identically on every Blinc backend.)
+  // The glass navbar, scrolling body and tab bar, layered over an animated
+  // colour-wash backdrop so the glass surfaces have something to refract. The
+  // content is centred to a comfortable max width: full-bleed on phones, a
+  // centred column on wide screens (so nothing stretches or overflows).
   var kids = [
     Glass.navbar({ title: "Glass UI Kit",
       leading: [ icon("sparkles", { size: 24, color: Glass.tokens.accent }) ],
@@ -193,7 +189,7 @@ function view() {
       actions: [ Glass.button({ label: "Cancel", variant: "ghost", onClick: "closeModal" }),
                  Glass.button({ label: "Confirm", variant: "accent", onClick: "closeModal" }) ] }));
   }
-  return Glass.screen({ children: kids });
+  return Glass.screen({ backdrop: true, animated: true, phase: phase, maxWidth: 760, children: kids });
 }
 
 // ---- Event handling -------------------------------------------------------

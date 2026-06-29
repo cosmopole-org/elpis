@@ -1,8 +1,9 @@
 //! Android entry point for the Elpis demo.
 //!
 //! `android_main` is the NativeActivity entry the `android-activity` glue calls.
-//! It boots the bundled **showcase** Miniapp inside an Elpis sandbox with a
-//! Blinc [`BlincBackend`] and hands Blinc's `AndroidApp` the shared frame
+//! It boots the bundled **liquid glass** Miniapp (`miniapps/glass-gallery`,
+//! driven by the Glass UI kit `sdk/glass-ui-kit.js`) inside an Elpis sandbox
+//! with a Blinc [`BlincBackend`] and hands Blinc's `AndroidApp` the shared frame
 //! closure. Same sandbox + bridge + lowering as the desktop and web builds;
 //! only the platform run loop differs.
 //!
@@ -15,15 +16,24 @@ use android_activity::AndroidApp;
 
 use elpis_blinc::{BlincBackend, Sandbox, SandboxConfig, SurfaceInfo};
 
-/// The demo Miniapp, bundled into the `.so`.
-const MINIAPP: &str = include_str!("../../../miniapps/showcase/app.js");
+/// The demo Miniapp, bundled into the `.so`: the **liquid glass** gallery.
+/// Module import is denied in the sandbox, so the Glass UI kit it depends on is
+/// shared the same way the host binary's `--lib` does it — by prepending the
+/// kit source ahead of the Miniapp (the host then prepends the UI prelude, so
+/// the guest sees prelude + kit + app). `concat!` over `include_str!` joins
+/// them at compile time.
+const MINIAPP: &str = concat!(
+    include_str!("../../../sdk/glass-ui-kit.js"),
+    "\n// ---- miniapp ----\n",
+    include_str!("../../../miniapps/glass-gallery/app.js"),
+);
 
 #[no_mangle]
 fn android_main(app: AndroidApp) {
     android_logger::init_once(
         android_logger::Config::default().with_max_level(log::LevelFilter::Info),
     );
-    log::info!("elpis-android: booting showcase miniapp");
+    log::info!("elpis-android: booting liquid glass gallery miniapp");
 
     if let Err(e) = run(app) {
         log::error!("elpis-android: {e}");

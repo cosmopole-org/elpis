@@ -1,7 +1,8 @@
 //! Web (wasm32) entry point for the Elpis demo.
 //!
-//! Boots the bundled **showcase** Miniapp inside an Elpis sandbox whose backend
-//! is a Blinc [`BlincBackend`], then hands Blinc's `WebApp` the shared frame
+//! Boots the bundled **liquid glass** Miniapp (`miniapps/glass-gallery`, driven
+//! by the Glass UI kit `sdk/glass-ui-kit.js`) inside an Elpis sandbox whose
+//! backend is a Blinc [`BlincBackend`], then hands Blinc's `WebApp` the shared frame
 //! closure so the UI renders to a WebGPU `<canvas>` in the browser. This is the
 //! exact same sandbox + bridge + lowering used by the desktop and Android
 //! builds — only the platform run loop differs.
@@ -15,8 +16,17 @@ use wasm_bindgen::prelude::*;
 
 use elpis_blinc::{BlincBackend, Sandbox, SandboxConfig, SurfaceInfo};
 
-/// The demo Miniapp, bundled into the wasm artifact.
-const MINIAPP: &str = include_str!("../../../miniapps/showcase/app.js");
+/// The demo Miniapp, bundled into the wasm artifact: the **liquid glass**
+/// gallery. Module import is denied in the sandbox, so the Glass UI kit it
+/// depends on is shared the same way the host binary's `--lib` does it — by
+/// prepending the kit source ahead of the Miniapp (the host then prepends the
+/// UI prelude, so the guest sees prelude + kit + app). `concat!` over
+/// `include_str!` joins them at compile time.
+const MINIAPP: &str = concat!(
+    include_str!("../../../sdk/glass-ui-kit.js"),
+    "\n// ---- miniapp ----\n",
+    include_str!("../../../miniapps/glass-gallery/app.js"),
+);
 
 /// Fonts bundled so text shapes in the browser (browsers don't expose system
 /// fonts to the WebGPU pipeline). DejaVu Sans is the **sans-serif** family the
@@ -33,7 +43,7 @@ const CANVAS_ID: &str = "elpis-canvas";
 #[wasm_bindgen(start)]
 pub fn start() {
     console_error_panic_hook::set_once();
-    web_sys::console::log_1(&"elpis-web: booting showcase miniapp".into());
+    web_sys::console::log_1(&"elpis-web: booting liquid glass gallery miniapp".into());
 
     wasm_bindgen_futures::spawn_local(async {
         if let Err(e) = run().await {

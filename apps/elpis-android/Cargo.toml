@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Android build of the Elpis demo: runs the showcase Miniapp on the elpian-vm and renders it with Blinc's native (NativeActivity) WebGPU backend. Built into a .so with cargo-ndk and packaged into an APK by the Gradle project under android/."
+description = "Android build of the Elpis demo: runs the liquid glass gallery Miniapp (Glass UI kit) on the elpian-vm and renders it with Blinc's native (NativeActivity) WebGPU backend. Built into a .so with cargo-ndk and packaged into an APK by the Gradle project under android/."
 publish = false
 
 [lib]

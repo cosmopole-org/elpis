@@ -1,5 +1,6 @@
-# Build the Elpis web demo (the showcase Miniapp running on the elpian-vm,
-# rendered by Blinc's WebGPU backend) to wasm and deploy it to GitHub Pages.
+# Build the Elpis web demo (the liquid glass gallery Miniapp — driven by the
+# Glass UI kit — running on the elpian-vm, rendered by Blinc's WebGPU backend)
+# to wasm and deploy it to GitHub Pages.
 #
 # One-time setup: in the repository Settings → Pages, set "Source" to
 # "GitHub Actions". The first run on the default branch then publishes the demo

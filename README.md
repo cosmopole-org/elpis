@@ -238,7 +238,11 @@ the backend applies via Blinc's frosted-glass path).
 
 The same Elpis sandbox + bridge + `Node → Blinc` lowering drives three platform
 targets; only the run loop differs (each demo crate supplies its own `blinc_app`
-platform feature and calls the shared `elpis_blinc::frame_closure`):
+platform feature and calls the shared `elpis_blinc::frame_closure`). The **web**
+and **Android** demos boot the **liquid glass gallery** (`miniapps/glass-gallery`,
+driven by the Glass UI kit `sdk/glass-ui-kit.js`) — the kit is bundled ahead of
+the Miniapp at compile time (`concat!` over `include_str!`), the same prelude +
+kit + app composition the host binary's `--lib` produces:
 
 | Target | Crate | Run loop | Status |
 |--------|-------|----------|--------|

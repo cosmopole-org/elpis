@@ -1,6 +1,7 @@
-# Build the Elpis Android demo (the showcase Miniapp running on the elpian-vm,
-# rendered by Blinc's native WebGPU backend) into an APK and publish it to the
-# root of the repository as `elpis-demo.apk`.
+# Build the Elpis Android demo (the liquid glass gallery Miniapp — driven by the
+# Glass UI kit — running on the elpian-vm, rendered by Blinc's native WebGPU
+# backend) into an APK and publish it to the root of the repository as
+# `elpis-demo.apk`.
 #
 # The Rust crate `apps/elpis-android` is compiled to an arm64-v8a `.so` with
 # `cargo ndk`, then the Gradle project in `apps/elpis-android/android` packages

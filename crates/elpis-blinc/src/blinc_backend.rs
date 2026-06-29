@@ -222,6 +222,12 @@ fn apply_style(mut d: Div, s: &BlincStyle) -> Div {
     if let Some(e) = s.inset {
         d = d.top(e.top).right(e.right).bottom(e.bottom).left(e.left);
     }
+    // Stacking order: a positive z-index raises a node's paint layer, so a
+    // full-bleed wallpaper (z 0) sits behind content (z 1) and the glass
+    // surfaces backdrop-blur it. (Blinc's renderer only acts on z-index > 0.)
+    if let Some(z) = s.z_index {
+        d = d.z_index(z);
+    }
     // Paint.
     if let Some(b) = &s.background {
         d.set_bg(bg_brush(b));

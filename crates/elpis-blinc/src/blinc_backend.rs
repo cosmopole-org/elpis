@@ -17,7 +17,9 @@
 #![cfg(feature = "blinc-backend")]
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
@@ -35,6 +37,7 @@ use blinc_layout::image::{image, ObjectFit};
 use blinc_layout::prelude::*;
 use blinc_layout::svg::svg;
 use blinc_layout::text::{text as btext, Text};
+use blinc_layout::widgets::{text_input, text_input_state_with_placeholder, SharedTextInputState};
 
 use elpis_protocol::canvas::{
     CanvasSpec, DrawOp, LineCap, LineJoin, PathSeg, Point as PPoint, Rect as PRect, Stroke as PStroke,
@@ -58,13 +61,24 @@ pub struct BlincShared {
     /// The latest lowered tree to draw.
     pub dom: Rc<RefCell<Option<BlincDom>>>,
     /// UI events queued by widget callbacks, drained by the host.
-    pub events: Rc<RefCell<Vec<UiEvent>>>,
+    ///
+    /// This is an `Arc<Mutex<…>>` (rather than `Rc<RefCell<…>>`) because the
+    /// real Blinc `text_input` widget's `on_change` callback is bounded
+    /// `Send + Sync`; an `Rc`-based queue could not be captured by it. All
+    /// access still happens on the single UI thread, so the mutex is never
+    /// actually contended.
+    pub events: Arc<Mutex<Vec<UiEvent>>>,
     /// Imperative backend commands the guest issued (router/media/etc.).
     pub commands: Rc<RefCell<Vec<(String, Vec<Value>)>>>,
     /// Whether the current tree wants per-frame ticks (an animated canvas /
     /// scene, or a node carrying animations). When set, the run loop drives the
     /// guest's `onTick` and keeps requesting frames so animation is continuous.
     pub animated: Rc<Cell<bool>>,
+    /// Persistent state for real interactive Blinc widgets (text inputs) so
+    /// focus, cursor and the typed text survive the per-frame tree rebuild.
+    /// Keyed by the node's event-handler id (or a content-derived key when the
+    /// node has no handler).
+    pub inputs: Rc<RefCell<HashMap<String, SharedTextInputState>>>,
 }
 
 /// The [`UiBackend`] implementation that feeds Blinc.
@@ -109,7 +123,7 @@ impl UiBackend for BlincBackend {
         self.surface
     }
     fn drain_events(&mut self) -> Vec<UiEvent> {
-        std::mem::take(&mut self.shared.events.borrow_mut())
+        self.shared.events.lock().map(|mut e| std::mem::take(&mut *e)).unwrap_or_default()
     }
     fn command(&mut self, channel: &str, args: &[Value]) -> Value {
         self.shared.commands.borrow_mut().push((channel.to_string(), args.to_vec()));
@@ -293,13 +307,36 @@ pub fn build(dom: &BlincDom, shared: &BlincShared) -> Boxed {
             Box::new(wire_events(d, dom, shared))
         }
         BlincContent::Input(i) => {
-            let (shown, color) = if i.value.is_empty() {
-                (i.placeholder.clone().unwrap_or_default(), BColor::rgba(0.55, 0.55, 0.62, 1.0))
-            } else {
-                (i.value.clone(), BColor::WHITE)
+            // Render a *real* Blinc text input so it can take focus and raise
+            // the on-screen keyboard. The widget owns the edited text, so its
+            // shared state is kept alive across rebuilds in `shared.inputs`
+            // (keyed by handler id), and its `on_change` callback feeds edits
+            // back to the guest as `input` events.
+            let handler = dom.events.get("input").or_else(|| dom.events.get("change")).cloned();
+            let key = handler.clone().unwrap_or_else(|| {
+                format!("input::{}::{:?}", i.placeholder.clone().unwrap_or_default(), i.input_type)
+            });
+            let data = {
+                let mut map = shared.inputs.borrow_mut();
+                map.entry(key)
+                    .or_insert_with(|| {
+                        text_input_state_with_placeholder(
+                            i.placeholder.clone().unwrap_or_default(),
+                        )
+                    })
+                    .clone()
             };
-            let d = field_box(&dom.style).child(btext(&shown).size(15.0).color(color));
-            Box::new(wire_events(d, dom, shared))
+            let mut ti = text_input(&data);
+            if let Some(h) = handler {
+                let events = shared.events.clone();
+                ti = ti.on_change(move |value| {
+                    if let Ok(mut q) = events.lock() {
+                        q.push(UiEvent::new(h.clone(), "input", Value::String(value.to_string())));
+                    }
+                    schedule_rebuild();
+                });
+            }
+            Box::new(ti)
         }
         BlincContent::Toggle { spec, .. } => {
             let on = spec.checked;
@@ -312,9 +349,11 @@ pub fn build(dom: &BlincDom, shared: &BlincShared) -> Boxed {
             if let Some(label) = &spec.label {
                 row = row.child(btext(label).size(15.0).color(text_color(dom)));
             }
-            Box::new(wire_events(row, dom, shared))
+            let handler = dom.events.get("change").or_else(|| dom.events.get("click")).cloned();
+            Box::new(emit_click(row, handler, "change", Value::Bool(!on), shared))
         }
         BlincContent::Radio(r) => {
+            let handler = dom.events.get("change").or_else(|| dom.events.get("click")).cloned();
             let mut col = div().flex_col().gap(8.0);
             for opt in &r.options {
                 let selected = r.selected.as_deref() == Some(opt.value.as_str());
@@ -328,26 +367,49 @@ pub fn build(dom: &BlincDom, shared: &BlincShared) -> Boxed {
                 } else {
                     outer
                 };
-                col = col.child(
-                    div()
-                        .flex_row()
-                        .items_center()
-                        .gap(8.0)
-                        .child(outer)
-                        .child(btext(&opt.label).size(15.0).color(text_color(dom))),
-                );
+                let option_row = div()
+                    .flex_row()
+                    .items_center()
+                    .gap(8.0)
+                    .child(outer)
+                    .child(btext(&opt.label).size(15.0).color(text_color(dom)));
+                col = col.child(emit_click(
+                    option_row,
+                    handler.clone(),
+                    "change",
+                    Value::String(opt.value.clone()),
+                    shared,
+                ));
             }
-            Box::new(wire_events(col, dom, shared))
+            Box::new(col)
         }
         BlincContent::Slider(s) => {
-            let frac = if s.max > s.min { (s.value - s.min) / (s.max - s.min) } else { 0.0 };
+            let (min, max) = (s.min, s.max);
+            let frac = if max > min { (s.value - min) / (max - min) } else { 0.0 };
             let fill = div().w(200.0 * frac.clamp(0.0, 1.0)).h(6.0).rounded(3.0).bg(BColor::rgba(0.3, 0.7, 1.0, 1.0));
-            let track = div()
+            let mut track = div()
                 .w(200.0)
                 .h(16.0)
                 .items_center()
                 .child(div().w(200.0).h(6.0).rounded(3.0).bg(BColor::rgba(0.3, 0.3, 0.4, 1.0)).child(fill));
-            Box::new(wire_events(div().flex_col().gap(4.0).child(track), dom, shared))
+            // Clicking the track sets the value from the click position so the
+            // slider is interactive without a native Blinc slider widget.
+            if let Some(h) = dom.events.get("change").cloned() {
+                let events = shared.events.clone();
+                track = track.on_click(move |ctx| {
+                    let f = if ctx.bounds_width > 0.0 {
+                        (ctx.local_x / ctx.bounds_width).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+                    let v = min + f * (max - min);
+                    if let Ok(mut q) = events.lock() {
+                        q.push(UiEvent::new(h.clone(), "change", Value::from(v as f64)));
+                    }
+                    schedule_rebuild();
+                });
+            }
+            Box::new(div().flex_col().gap(4.0).child(track))
         }
         BlincContent::Dropdown(dd) => {
             let label = dd
@@ -364,7 +426,25 @@ pub fn build(dom: &BlincDom, shared: &BlincShared) -> Boxed {
                 .gap(10.0)
                 .child(btext(&label).size(15.0).color(BColor::WHITE))
                 .child(btext("▾").size(14.0).color(BColor::rgba(0.6, 0.6, 0.7, 1.0)));
-            Box::new(wire_events(field, dom, shared))
+            // Without a native dropdown popup, clicking advances to the next
+            // option and emits the selection so the guest stays in control.
+            let handler = dom.events.get("change").or_else(|| dom.events.get("click")).cloned();
+            let next = if dd.options.is_empty() {
+                None
+            } else {
+                let cur = dd
+                    .selected
+                    .as_ref()
+                    .and_then(|sel| dd.options.iter().position(|o| &o.value == sel))
+                    .unwrap_or(0);
+                Some(dd.options[(cur + 1) % dd.options.len()].value.clone())
+            };
+            match (handler, next) {
+                (Some(h), Some(nv)) => {
+                    Box::new(emit_click(field, Some(h), "change", Value::String(nv), shared))
+                }
+                _ => Box::new(field),
+            }
         }
         BlincContent::Tabs(t) => {
             let mut row = div().flex_row().gap(6.0);
@@ -985,10 +1065,41 @@ fn replay(ctx: &mut dyn DrawContext, bounds: CanvasBounds, ops: &[DrawOp]) {
 /// paints the new tree.
 fn schedule_rebuild() {
     blinc_layout::widgets::request_full_rebuild();
+    // The desktop and web run loops consume the global rebuild flag above
+    // (`take_needs_rebuild`), but the **Android** loop does not — it only
+    // rebuilds when the reactive dirty flag trips (the same signal Blinc's own
+    // `State::set` raises), when the per-tree dirty tracker is set, or on an OS
+    // resize. Without tripping that flag, a queued UI event (and each animation
+    // frame's re-arm) sits undelivered on mobile until the user rotates the
+    // device or minimizes/restores the app — which is exactly the reported
+    // "frozen until resize" symptom. Set it here so the wake is cross-platform.
+    if let Some(cs) = blinc_core::context_state::BlincContextState::try_get() {
+        cs.dirty_flag().store(true, std::sync::atomic::Ordering::SeqCst);
+    }
     // `try_get_scheduler` avoids a panic if called before the platform has
-    // installed the global scheduler.
+    // installed the global scheduler. This is the only thing that pulls the
+    // desktop winit loop out of `ControlFlow::Wait`.
     if let Some(scheduler) = blinc_animation::try_get_scheduler() {
         scheduler.request_redraw();
+    }
+}
+
+/// Attach a click handler that emits a single [`UiEvent`] (with a precomputed
+/// value) and wakes the run loop. Used for the widget families Blinc 0.5 has no
+/// ready-made interactive element for (toggle/switch, radio, dropdown), so they
+/// stay driveable from the guest without a native widget.
+fn emit_click(d: Div, handler: Option<String>, kind: &'static str, value: Value, shared: &BlincShared) -> Div {
+    match handler {
+        Some(h) => {
+            let events = shared.events.clone();
+            d.on_click(move |_| {
+                if let Ok(mut q) = events.lock() {
+                    q.push(UiEvent::new(h.clone(), kind, value.clone()));
+                }
+                schedule_rebuild();
+            })
+        }
+        None => d,
     }
 }
 
@@ -999,7 +1110,9 @@ fn wire_events(mut d: Div, dom: &BlincDom, shared: &BlincShared) -> Div {
         let handler = handler.clone();
         let events = shared.events.clone();
         d = d.on_click(move |_| {
-            events.borrow_mut().push(UiEvent::click(handler.clone()));
+            if let Ok(mut q) = events.lock() {
+                q.push(UiEvent::click(handler.clone()));
+            }
             schedule_rebuild();
         });
     }
@@ -1026,7 +1139,8 @@ pub fn frame_closure(
         // 1. Deliver queued UI events to the guest (updates the retained dom),
         //    then — if the resulting tree is animated — drive one tick.
         {
-            let pending: Vec<UiEvent> = std::mem::take(&mut shared.events.borrow_mut());
+            let pending: Vec<UiEvent> =
+                shared.events.lock().map(|mut e| std::mem::take(&mut *e)).unwrap_or_default();
             let mut sb = sandbox.borrow_mut();
             for ev in pending {
                 let _ = sb.dispatch_event(&ev);

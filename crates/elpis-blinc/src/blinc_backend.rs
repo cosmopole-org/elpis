@@ -25,11 +25,12 @@ use serde_json::Value;
 
 use blinc_app::windowed::WindowedContext;
 use blinc_core::{
-    BlurStyle, Brush as BBrush, ClipShape, Color as BColor, CornerRadius as BCorner, DrawContext,
-    Gradient, GradientSpace, GradientSpread, GradientStop as BStop, LineCap as BLineCap,
-    LineJoin as BLineJoin, Path as BPath, Point as BPoint, Rect as BRect, Stroke as BStroke,
-    TextStyle as BTextStyle, Transform as BTransform,
+    Brush as BBrush, ClipShape, Color as BColor, CornerRadius as BCorner, DrawContext, Gradient,
+    GradientSpace, GradientSpread, GradientStop as BStop, LineCap as BLineCap, LineJoin as BLineJoin,
+    Path as BPath, Point as BPoint, Rect as BRect, Stroke as BStroke, TextStyle as BTextStyle,
+    Transform as BTransform,
 };
+use blinc_layout::element::GlassMaterial;
 use blinc_app::TextAlign as LTextAlign;
 use blinc_layout::canvas::{canvas, Canvas, CanvasBounds};
 use blinc_layout::div::{div, Div};
@@ -245,26 +246,32 @@ fn apply_style(mut d: Div, s: &BlincStyle) -> Div {
         d.set_shadow(blinc_core_shadow(sh));
     }
     // The signature liquid-glass effect: blur whatever is rendered behind this
-    // surface. A `GlassMaterial` lowers to a `filter.backdrop_blur`; a bare
-    // `glass: true` falls back to Blinc's frosted-glass preset.
+    // surface. Drive Blinc's real frosted-glass shader (RenderLayer::Glass) via
+    // a glass `Material`.
     //
-    // NOTE: `Div::backdrop_blur(r)` sets the element's *background* to a blur
-    // brush, which would clobber the frosted tint set just above (leaving the
-    // surface a bare, near-invisible blur — the "outlined, fill-less panels"
-    // bug). So bake the tint into the blur brush instead, via a `BlurStyle`, so
-    // the panel reads as actual frosted glass: blurred backdrop + tint overlay.
+    // NOTE: do NOT use `Div::backdrop_blur(r)` — it sets the element's
+    // *background* to a `Brush::Blur`, a path this GPU backend does not paint
+    // (it renders nothing and discards the tint, leaving bare outlined boxes).
+    // The glass Material instead keeps the element's tint background and applies
+    // blur/saturation/brightness as render props that the glass shader honours.
     match &s.filter {
         Some(f) if f.backdrop_blur > 0.0 => {
-            let mut bs = BlurStyle::with_radius(f.backdrop_blur);
-            if let Some(Brush::Solid { color }) = &s.background {
-                bs = bs.tint(bcolor(*color));
+            let mut gm = GlassMaterial::new().blur(f.backdrop_blur);
+            if let Some(sat) = f.saturate {
+                gm = gm.saturation(sat);
             }
-            d = d.backdrop_blur_style(bs);
+            if let Some(br) = f.brightness {
+                gm = gm.brightness(br);
+            }
+            if let Some(Brush::Solid { color }) = &s.background {
+                gm = gm.tint(bcolor(*color));
+            }
+            d = d.effect(gm);
         }
         Some(f) if f.blur > 0.0 => d = d.blur(f.blur),
         _ => {
             if s.glass {
-                d = d.glass();
+                d = d.effect(GlassMaterial::new());
             }
         }
     }

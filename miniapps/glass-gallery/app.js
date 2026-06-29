@@ -37,6 +37,13 @@ function surfacesTab() {
         Glass.button({ label: "Docs", variant: "ghost", onClick: "noop" })
       ]})
     ]}),
+    // An animated "liquid" blob band. The clip container is full-width with
+    // hidden overflow, so the (intentionally oversized) blob fills the band and
+    // never forces horizontal overflow on narrow screens.
+    div({ style: { width: { unit: "full" }, height: { unit: "px", value: 160 },
+                   radius: { tl: 22, tr: 22, br: 22, bl: 22 }, overflow_x: "hidden", overflow_y: "hidden",
+                   background: solid(Glass.tokens.bg0) },
+          children: [ Glass.blob({ width: 760, height: 240, phase: phase, animated: true }) ] }),
     Glass.row({ gap: 16, wrap: true, children: [
       Glass.card({ variant: "regular", children: [ Glass.title({ text: "Regular" }), Glass.subtitle({ text: "Frosted surface" }) ]}),
       Glass.card({ variant: "thin", children: [ Glass.title({ text: "Thin" }), Glass.subtitle({ text: "Subtle blur" }) ]}),
@@ -170,10 +177,10 @@ function body() {
 }
 
 function view() {
-  // The glass navbar, scrolling body and tab bar, layered over an animated
-  // colour-wash backdrop so the glass surfaces have something to refract. The
-  // content is centred to a comfortable max width: full-bleed on phones, a
-  // centred column on wide screens (so nothing stretches or overflows).
+  // A single top-to-bottom column over the screen's colourful gradient
+  // wallpaper (which the glass surfaces refract). The content is centred to a
+  // comfortable max width: full-bleed on phones, a centred column on wide
+  // screens, so nothing stretches or overflows horizontally.
   var kids = [
     Glass.navbar({ title: "Glass UI Kit",
       leading: [ icon("sparkles", { size: 24, color: Glass.tokens.accent }) ],
@@ -189,7 +196,7 @@ function view() {
       actions: [ Glass.button({ label: "Cancel", variant: "ghost", onClick: "closeModal" }),
                  Glass.button({ label: "Confirm", variant: "accent", onClick: "closeModal" }) ] }));
   }
-  return Glass.screen({ backdrop: true, animated: true, phase: phase, maxWidth: 760, children: kids });
+  return Glass.screen({ maxWidth: 760, children: kids });
 }
 
 // ---- Event handling -------------------------------------------------------

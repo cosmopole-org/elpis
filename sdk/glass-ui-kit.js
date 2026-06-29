@@ -218,38 +218,35 @@ Glass.divider = function (o) {
   return Glass._fin(div({ style: st }), o);
 };
 
-// The app root: a full-bleed gradient backdrop with the content laid over it.
-// Liquid glass only reads as glass against a colorful, textured background, so
-// pass `backdrop: true` to layer an animated colour wash (Glass.backdrop)
-// *behind* the content for the glass surfaces to refract. `maxWidth` caps the
-// content column and centres it, so the UI stays comfortably narrow on wide
-// screens while going full-bleed on phones.
+// The app root: a full-bleed gradient wallpaper with the content laid over it.
+// Liquid glass only reads as glass against colour — each glass surface
+// backdrop-blurs whatever is painted behind it, which here is this colourful
+// gradient, so different panels pick up different hues. `maxWidth` caps the
+// content and centres it (comfortably narrow on wide screens, full-bleed on
+// phones). The layout stays in normal flow — a single column — so it renders
+// identically on every Blinc backend (Blinc's `stack` is a flow container, not
+// a z-overlay, so we don't lean on z-stacking here).
 //
-//   opts: background?, backdrop?, animated?, phase?, maxWidth?, padding?, gap?
+//   opts: background?, maxWidth?, padding?, gap?
 Glass.screen = function (o) {
   o = Glass._opt(o);
   var t = Glass.tokens;
+  // A saturated diagonal wallpaper (deep blue -> indigo -> violet) so the glass
+  // has real colour to refract rather than near-black.
   var bg = has(o, "background") ? o.background
-    : linearGradient(135, [ stop(0, t.bg0), stop(0.55, t.bg1), stop(1, t.bg2) ]);
-  var colSt = {
-    width: Glass._len("full"), height: Glass._len("full"),
-    padding: Glass._edges(Glass._d(o, "padding", t.space.lg)),
-    gap: Glass._d(o, "gap", t.space.lg)
+    : linearGradient(135, [ stop(0, hex("#16215C")), stop(0.4, hex("#3B2A78")),
+                            stop(0.72, hex("#6A2E7C")), stop(1, hex("#0D1430")) ]);
+  var gap = Glass._d(o, "gap", t.space.lg);
+  // The content column, optionally capped to a max width.
+  var inSt = { width: Glass._len("full"), height: Glass._len("full"), gap: gap };
+  if (has(o, "maxWidth")) { inSt.max_width = Glass._len(o.maxWidth); }
+  var inner = column({ style: inSt, children: Glass._kids(o) });
+  // The full-bleed root, with the content centred horizontally.
+  var st = {
+    width: Glass._len("full"), height: Glass._len("full"), background: bg,
+    align_items: "center", padding: Glass._edges(Glass._d(o, "padding", t.space.lg))
   };
-  if (has(o, "maxWidth")) { colSt.max_width = Glass._len(o.maxWidth); colSt.align_self = "center"; }
-  if (!Glass._d(o, "backdrop", false)) {
-    // No separate backdrop: the gradient lives on the content column itself.
-    colSt.background = bg;
-    return Glass._fin(column({ style: colSt, children: Glass._kids(o) }), o);
-  }
-  // Backdrop mode: a full-bleed colour wash underneath a transparent content
-  // column, stacked so the glass reads against the moving colour behind it.
-  var content = column({ style: colSt, children: Glass._kids(o) });
-  var bd = Glass.backdrop({ background: bg, phase: Glass._d(o, "phase", 0), animated: Glass._d(o, "animated", true) });
-  var root = stack({ style: { width: Glass._len("full"), height: Glass._len("full"),
-                              background: solid(t.bg0), overflow_x: "hidden", overflow_y: "hidden" },
-                     children: [ bd, content ] });
-  return Glass._fin(root, o);
+  return Glass._fin(column({ style: st, children: [inner] }), o);
 };
 
 // ===========================================================================
@@ -1216,28 +1213,6 @@ Glass.blob = function (o) {
   }
   return Glass._fin(canvas(ops, { animated: Glass._d(o, "animated", false),
                                   style: { width: Glass._len(w), height: Glass._len(h), overflow_x: "hidden", overflow_y: "hidden" } }), o);
-};
-
-// A full-bleed backdrop: a base gradient with the liquid blob wash floating
-// over it, sized to fill its parent. Drop it behind a screen's content (e.g.
-// the first child of a Glass.stack, or via `Glass.screen({ backdrop: true })`)
-// so every glass surface has a colourful, textured background to refract.
-//
-//   opts: background?, phase?, animated?, blobs?, width?, height?
-Glass.backdrop = function (o) {
-  o = Glass._opt(o);
-  var t = Glass.tokens;
-  var grad = has(o, "background") ? o.background
-    : linearGradient(135, [ stop(0, t.bg0), stop(0.55, t.bg1), stop(1, t.bg2) ]);
-  var full = Glass._len("full");
-  var layers = [ div({ style: { width: full, height: full, background: grad } }) ];
-  if (Glass._d(o, "blobs", true)) {
-    var w = Glass._d(o, "width", 1280); var h = Glass._d(o, "height", 1280);
-    push(layers, column({ style: { width: full, height: full, align_items: "center", justify_content: "center",
-                                   overflow_x: "hidden", overflow_y: "hidden" },
-      children: [ Glass.blob({ width: w, height: h, phase: Glass._d(o, "phase", 0), animated: Glass._d(o, "animated", true) }) ] }));
-  }
-  return Glass._fin(stack({ style: { width: full, height: full, overflow_x: "hidden", overflow_y: "hidden" }, children: layers }), o);
 };
 
 // A radial glow halo behind a focal element.

@@ -37,6 +37,10 @@ function surfacesTab() {
         Glass.button({ label: "Docs", variant: "ghost", onClick: "noop" })
       ]})
     ]}),
+    // An animated "liquid" blob banner (bounded + clipped so it flows inline).
+    div({ style: { radius: { tl: 22, tr: 22, br: 22, bl: 22 }, overflow_x: "hidden", overflow_y: "hidden",
+                   background: solid(Glass.tokens.bg0) },
+          children: [ Glass.blob({ width: 600, height: 180, phase: phase, animated: true }) ] }),
     Glass.row({ gap: 16, wrap: true, children: [
       Glass.card({ variant: "regular", children: [ Glass.title({ text: "Regular" }), Glass.subtitle({ text: "Frosted surface" }) ]}),
       Glass.card({ variant: "thin", children: [ Glass.title({ text: "Thin" }), Glass.subtitle({ text: "Subtle blur" }) ]}),
@@ -170,27 +174,26 @@ function body() {
 }
 
 function view() {
-  var layers = [
-    // Animated liquid blob wallpaper sitting behind the glass.
-    div({ style: { position: "absolute", inset: { top: 0, right: 0, bottom: 0, left: 0 } },
-          children: [ Glass.blob({ width: 960, height: 680, phase: phase, animated: true }) ] }),
-    Glass.screen({ children: [
-      Glass.navbar({ title: "Glass UI Kit",
-        leading: [ icon("sparkles", { size: 24, color: Glass.tokens.accent }) ],
-        trailing: [ Glass.iconButton({ icon: "search", onClick: "noop" }),
-                    Glass.iconButton({ icon: "settings", onClick: "noop" }) ] }),
-      Glass.scroll({ children: [ body() ] }),
-      Glass.tabBar({ items: TABS, selected: tab, onSelect: "tab" })
-    ]})
+  // A single top-to-bottom column: the screen's gradient is the liquid-glass
+  // backdrop, with the glass navbar, scrolling body and tab bar layered over
+  // it. (We keep the layout in normal flow rather than an absolutely
+  // positioned stack so it renders identically on every Blinc backend.)
+  var kids = [
+    Glass.navbar({ title: "Glass UI Kit",
+      leading: [ icon("sparkles", { size: 24, color: Glass.tokens.accent }) ],
+      trailing: [ Glass.iconButton({ icon: "search", onClick: "noop" }),
+                  Glass.iconButton({ icon: "settings", onClick: "noop" }) ] }),
+    Glass.scroll({ children: [ body() ] }),
+    Glass.tabBar({ items: TABS, selected: tab, onSelect: "tab" })
   ];
   if (showModal) {
-    push(layers, Glass.modal({ title: "Liquid Glass Dialog",
+    push(kids, Glass.modal({ title: "Liquid Glass Dialog",
       onDismiss: "closeModal", dismissible: true,
       children: [ Glass.subtitle({ text: "A glass sheet floating over a dimmed backdrop." }) ],
       actions: [ Glass.button({ label: "Cancel", variant: "ghost", onClick: "closeModal" }),
                  Glass.button({ label: "Confirm", variant: "accent", onClick: "closeModal" }) ] }));
   }
-  return stack({ style: { width: { unit: "full" }, height: { unit: "full" } }, children: layers });
+  return Glass.screen({ children: kids });
 }
 
 // ---- Event handling -------------------------------------------------------

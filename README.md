@@ -228,6 +228,14 @@ headless default path needs none of this.
 
 ## Demos: desktop, web, and Android
 
+The web demo (`apps/elpis-web`) boots the **Glass UI kit gallery** — it prepends
+`sdk/glass-ui-kit.js` to `miniapps/glass-gallery/app.js` (the same composition
+`elpis --lib` performs) and renders it to a WebGPU canvas. The live Blinc
+backend honors the kit's full surface: `full`/`auto`/`fit` sizing,
+absolute/fixed/relative positioning with insets, and **real `backdrop_blur`
+glass** (a `GlassMaterial` lowers to a tinted background + rim + `backdrop_blur`
+the backend applies via Blinc's frosted-glass path).
+
 The same Elpis sandbox + bridge + `Node → Blinc` lowering drives three platform
 targets; only the run loop differs (each demo crate supplies its own `blinc_app`
 platform feature and calls the shared `elpis_blinc::frame_closure`). The **web**

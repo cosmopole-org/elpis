@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Web (wasm32) build of the Elpis demo: runs the showcase Miniapp on the elpian-vm and renders it with Blinc's WebGPU backend in the browser."
+description = "Web (wasm32) build of the Elpis demo: runs the liquid glass gallery Miniapp (Glass UI kit) on the elpian-vm and renders it with Blinc's WebGPU backend in the browser."
 publish = false
 
 [lib]

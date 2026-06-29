@@ -7,7 +7,11 @@
 //! (storage, clock, randomness, custom host messaging).
 
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
+// `web_time` re-exports `std::time` on native targets and provides a
+// browser-backed implementation on `wasm32-unknown-unknown`, where the real
+// `std::time::SystemTime::now()` panics. This keeps the clock working in the
+// web demo without changing behavior on desktop/Android.
+use web_time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 

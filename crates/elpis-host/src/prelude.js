@@ -124,6 +124,20 @@ function video(src, props) {
   n.src = src;
   return n;
 }
+function audio(src, props) {
+  var n = props ? props : {};
+  n.type = "audio";
+  n.src = src;
+  return n;
+}
+// A named guest-defined component instance (for tooling / hot-reload).
+function component(name, propsBlob, props) {
+  var n = props ? props : {};
+  n.type = "component";
+  n.name = name;
+  n.props = propsBlob ? propsBlob : {};
+  return n;
+}
 
 // ---- Helpers --------------------------------------------------------------
 
@@ -143,3 +157,103 @@ function solid(color) { return { kind: "solid", color: color }; }
 // Build an rgba color (channels 0..1).
 function rgba(r, g, b, a) { return { r: r, g: g, b: b, a: a }; }
 function rgb(r, g, b) { return { r: r, g: g, b: b, a: 1.0 }; }
+
+// ---- Paint helpers --------------------------------------------------------
+//
+// Foundational color/brush/shadow constructors so a UI kit (or any Miniapp)
+// composes paint with named helpers instead of bare object literals.
+
+// Parse a CSS-ish "#rgb"/"#rrggbb"/"#rrggbbaa" hex string into a color
+// (channels 0..1). Use `hexA(s, alpha)` to force a specific alpha.
+function hex(s) {
+  var str = "" + s;
+  if (charAt(str, 0) == "#") { str = substring(str, 1, len(str)); }
+  var zero = ord("0");
+  var nine = ord("9");
+  var ach = ord("a");
+  var digit = function (ch) {
+    var code = ord(lower(ch));
+    if (code >= zero && code <= nine) { return code - zero; }
+    return code - ach + 10;
+  };
+  var byteAt = function (i) { return (digit(charAt(str, i)) * 16 + digit(charAt(str, i + 1))) / 255.0; };
+  var nibAt = function (i) { var v = digit(charAt(str, i)); return (v * 16 + v) / 255.0; };
+  var n = len(str);
+  if (n == 3) { return { r: nibAt(0), g: nibAt(1), b: nibAt(2), a: 1.0 }; }
+  if (n == 8) { return { r: byteAt(0), g: byteAt(2), b: byteAt(4), a: byteAt(6) }; }
+  return { r: byteAt(0), g: byteAt(2), b: byteAt(4), a: 1.0 };
+}
+function hexA(s, a) { return withAlpha(hex(s), a); }
+
+// A color with its alpha replaced (handy for tints/overlays).
+function withAlpha(color, a) { return { r: color.r, g: color.g, b: color.b, a: a }; }
+
+// Gradient stop and gradient brushes.
+function stop(offset, color) { return { offset: offset, color: color }; }
+function linearGradient(angle, stops) { return { kind: "linear_gradient", angle: angle, stops: stops }; }
+function radialGradient(stops, center, radius) {
+  return { kind: "radial_gradient", center: center ? center : [0.5, 0.5], radius: radius ? radius : 0.5, stops: stops };
+}
+function conicGradient(stops, center, startAngle) {
+  return { kind: "conic_gradient", center: center ? center : [0.5, 0.5], start_angle: startAngle ? startAngle : 0, stops: stops };
+}
+function imageBrush(src, fit) { return { kind: "image", src: src, fit: fit ? fit : "cover" }; }
+
+// A drop/inner shadow.
+function shadow(offset, blur, color, spread, inset) {
+  return { offset: offset ? offset : [0, 0], blur: blur ? blur : 0, spread: spread ? spread : 0,
+           color: color ? color : rgba(0, 0, 0, 0.3), inset: inset ? true : false };
+}
+
+// ---- Liquid glass ---------------------------------------------------------
+//
+// A liquid-glass material descriptor for `style.glass_material`. The host
+// lowering expands it into a backdrop-blur + saturate filter, a tinted
+// translucent background, a specular rim border, a radius and an elevation
+// shadow — only for fields the node didn't set itself.
+function _isNum(x) { return typeOf(x) == "number"; }
+function glassMaterial(opts) {
+  var o = opts ? opts : {};
+  var m = {};
+  if (_isNum(o.blur)) { m.blur = o.blur; }
+  if (_isNum(o.saturate)) { m.saturate = o.saturate; }
+  if (_isNum(o.brightness)) { m.brightness = o.brightness; }
+  if (o.tint) { m.tint = o.tint; }
+  if (o.rim) { m.rim = o.rim; }
+  if (_isNum(o.rim_width)) { m.rim_width = o.rim_width; }
+  if (_isNum(o.radius)) { m.radius = o.radius; }
+  if (_isNum(o.elevation)) { m.elevation = o.elevation; }
+  if (o.interactive) { m.interactive = true; }
+  return m;
+}
+
+// ---- Composition helpers --------------------------------------------------
+
+// Set a stable reconciliation key on a node (chainable).
+function withKey(n, key) { n.key = key; return n; }
+
+// Shallow-merge `extra` style into a node's style (extra wins). Returns node.
+function withStyle(n, extra) {
+  if (!extra) { return n; }
+  if (!n.style) { n.style = extra; return n; }
+  n.style = merge(n.style, extra);
+  return n;
+}
+
+// Bind several events at once: bindEvents(node, { click: "id", input: "id2" }).
+function bindEvents(n, map) {
+  if (!map) { return n; }
+  var ks = keys(map);
+  for (var i = 0; i < len(ks); i = i + 1) { on(n, ks[i], map[ks[i]]); }
+  return n;
+}
+
+// Attach a keyframe/spring animation (chainable).
+function withAnim(n, animation) {
+  if (!n.animations) { n.animations = []; }
+  push(n.animations, animation);
+  return n;
+}
+
+// Attach a layout transition (chainable).
+function withTransition(n, transition) { n.transition = transition; return n; }

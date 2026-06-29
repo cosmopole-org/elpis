@@ -270,6 +270,87 @@ pub struct Filter {
     pub hue_rotate: Option<f32>,
 }
 
+/// A **liquid glass** material — the foundational primitive of the Glass UI
+/// kit. A node carrying a `GlassMaterial` is a translucent, backdrop-blurred
+/// surface with a color tint, a bright specular rim, and an optional drop
+/// shadow that gives it physical depth (Apple's "Liquid Glass" look).
+///
+/// It is *declarative sugar* over the lower-level paint fields: the Blinc
+/// lowering expands a `GlassMaterial` into a concrete backdrop-blur + saturate
+/// [`Filter`], a tinted translucent [`Brush`] background, a rim [`border`], an
+/// elevation [`Shadow`], and the `glass` flag — but only for the fields the
+/// guest did not set explicitly, so a Miniapp can always override any piece.
+/// `Style::glass` stays a plain bool for the simplest "just frost this" case.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct GlassMaterial {
+    /// Backdrop blur radius in px — the frosted "see-through" effect.
+    #[serde(default = "default_glass_blur")]
+    pub blur: f32,
+    /// Saturation multiplier applied to whatever shows through the glass
+    /// (`> 1.0` makes the backdrop vivid, the signature "liquid" tell).
+    #[serde(default = "default_glass_saturate")]
+    pub saturate: f32,
+    /// Brightness multiplier of the backdrop (`> 1.0` = "clear"/light glass,
+    /// `< 1.0` = "smoked"/dark glass).
+    #[serde(default = "one")]
+    pub brightness: f32,
+    /// Tint laid over the blur. Its **alpha** controls how milky the glass is
+    /// (low alpha = nearly clear, high alpha = frosted).
+    #[serde(default = "default_glass_tint")]
+    pub tint: Color,
+    /// Specular rim color — the bright hairline along the surface edge that
+    /// sells the "polished glass" look.
+    #[serde(default = "default_glass_rim")]
+    pub rim: Color,
+    /// Rim thickness in px (`0` = no rim).
+    #[serde(default = "one")]
+    pub rim_width: f32,
+    /// Corner radius in px applied to the surface (glass is almost always
+    /// rounded).
+    #[serde(default = "default_glass_radius")]
+    pub radius: f32,
+    /// Elevation in px: drop-shadow blur/offset giving the surface lift
+    /// (`0` = flush against the backdrop).
+    #[serde(default)]
+    pub elevation: f32,
+    /// Advisory flag: this glass reacts to pointer (hover/press lift). Carried
+    /// through to the backend so it can add interaction affordances.
+    #[serde(default)]
+    pub interactive: bool,
+}
+
+fn default_glass_blur() -> f32 {
+    18.0
+}
+fn default_glass_saturate() -> f32 {
+    1.8
+}
+fn default_glass_tint() -> Color {
+    Color::rgba(1.0, 1.0, 1.0, 0.12)
+}
+fn default_glass_rim() -> Color {
+    Color::rgba(1.0, 1.0, 1.0, 0.45)
+}
+fn default_glass_radius() -> f32 {
+    20.0
+}
+
+impl Default for GlassMaterial {
+    fn default() -> Self {
+        GlassMaterial {
+            blur: default_glass_blur(),
+            saturate: default_glass_saturate(),
+            brightness: 1.0,
+            tint: default_glass_tint(),
+            rim: default_glass_rim(),
+            rim_width: 1.0,
+            radius: default_glass_radius(),
+            elevation: 0.0,
+            interactive: false,
+        }
+    }
+}
+
 /// Flex direction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -433,6 +514,11 @@ pub struct Style {
     /// Marks this node as a glassmorphism surface (Blinc's signature material).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub glass: Option<bool>,
+    /// A full **liquid glass** material. Richer than the `glass` bool: it
+    /// carries tint/blur/saturation/rim/elevation and is expanded into concrete
+    /// paint by the lowering. The Glass UI kit emits this for every surface.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub glass_material: Option<GlassMaterial>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
 

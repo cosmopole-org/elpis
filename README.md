@@ -29,8 +29,9 @@ the Blinc GPU UI framework instead of Flutter.
 | **`crates/elpis-protocol`** | The wire protocol: a serializable **widget DSL tree** (`Node`/`NodeKind`) covering the full Blinc surface, a **keyed tree-diff** that turns two trees into a minimal patch script, and the **host-call envelope**. No Blinc/GPU dependency. |
 | **`crates/elpis-host`** | The **sandbox runtime**. Owns an `elpian-vm` instance, runs a JS Miniapp, and services every `askHost` UI call against a retained widget tree and a pluggable backend. Routes UI events back into the VM. Capabilities (net/fs/module-import) are **denied by default**. |
 | **`crates/elpis-blinc`** | The **Blinc backend**. A pure, tested lowering from the protocol tree to a blinc-flavored element description (`lower`), plus the live `blinc_layout`/`blinc_core` interpreter and windowed run loop behind the `blinc-backend` feature. |
-| **`apps/elpis-app`** | The host binary (`elpis`). Instantiates a sandbox, loads a Miniapp, and runs it — headless by default, or in a real Blinc window with `--features blinc`. |
-| **`miniapps/`** | Example Miniapps written in JS (`counter`, `showcase`). |
+| **`apps/elpis-app`** | The host binary (`elpis`). Instantiates a sandbox, loads a Miniapp, and runs it — headless by default, or in a real Blinc window with `--features blinc`. Supports `--lib FILE` to prepend reusable SDK sources (e.g. the Glass UI kit). |
+| **`sdk/`** | **`glass-ui-kit.js`** — the **Glass UI kit**, a full "liquid glass" component SDK written in sandbox JS on top of the Blinc builders (see below). |
+| **`miniapps/`** | Example Miniapps written in JS (`counter`, `showcase`, `glass-gallery`). |
 
 ## How the bridge works
 
@@ -105,6 +106,79 @@ The protocol and lowering cover the full Blinc ecosystem — verified by the
 - **Theming, router, media, storage, messaging** — `theme.*`, `router.*`,
   `media.*`, sandboxed `storage.*`, and a bidirectional `host.send`/`host.request`
   pipe.
+
+## The Glass UI kit (`sdk/glass-ui-kit.js`)
+
+A full **liquid-glass component SDK** written entirely in sandbox JavaScript on
+top of the Blinc builders the host imports into the VM. Every surface renders as
+Apple-style *liquid glass*: a translucent, backdrop-blurred panel with a
+saturated backdrop, a bright specular rim, and physical depth. The kit defines
+one global, `Glass`, with factory functions covering the whole widget space:
+
+- **Layout** — `screen`, `row`/`column`/`stack`/`grid`/`wrap`/`scroll`/`center`,
+  `spacer`, `divider`, `surface`.
+- **Panels** — `card`, `panel`, `sheet`, `hero`.
+- **Typography** — `text`, `display`/`heading`/`title`/`subtitle`/`caption`/
+  `label`, `code`, `link`, `markdown`.
+- **Actions** — `button` (accent/ghost/destructive/success/pill/sizes),
+  `iconButton`, `fab`, `buttonGroup`, `segmented`.
+- **Indicators** — `badge`, `dot`, `chip`, `tag`, `avatar`, `avatarGroup`,
+  `kbd`, `icon`.
+- **Forms** — `field`, `textField`/`textArea`/`passwordField`/`numberField`/
+  `search`, `checkbox`, `toggle` (`switch`), `radioGroup`, `slider`,
+  `rangeSlider`, `select`/`multiSelect`, `stepper`, `rating`, `colorSwatch`.
+- **Navigation** — `navbar`, `tabBar`, `tabs`, `breadcrumbs`, `pagination`,
+  `menu`/`menuItem`, `sidebar`, `drawer`.
+- **Overlays** — `modal`, `bottomSheet`, `popover`, `tooltip`, `toast`,
+  `snackbar`, `loadingOverlay`.
+- **Feedback** — `alert`/`banner`, `progress`/`progressCircle`, `spinner`,
+  `skeleton`, `emptyState`.
+- **Data display** — `list`/`listItem`, `table`, `stat`, `keyValue`, `timeline`,
+  `accordion`/`collapsible`.
+- **Media** — `image`, `video`, `audioPlayer`, `carousel`, `gallery`, `scene`
+  (glass-framed 3D).
+- **Charts (2D canvas)** — `ring`, `gauge`, `barChart`, `lineChart`.
+- **Decorative** — `blob` (animated liquid wallpaper), `glow`.
+- **Theming** — `Glass.tokens`, `Glass.theme(partial)`, `Glass.material(variant)`.
+
+```js
+function view() {
+  return Glass.screen({ children: [
+    Glass.navbar({ title: "Inbox", trailing: [ Glass.iconButton({ icon: "plus", onClick: "add" }) ] }),
+    Glass.card({ children: [
+      Glass.heading({ text: "Welcome" }),
+      Glass.button({ label: "Continue", variant: "accent", onClick: "go" })
+    ]})
+  ]});
+}
+render(view());
+```
+
+Because runtime module import is denied in the sandbox, the kit is shared by
+**prepending** it to a Miniapp. The host binary does this with `--lib`:
+
+```bash
+cargo run --bin elpis -- --lib sdk/glass-ui-kit.js miniapps/glass-gallery/app.js
+cargo run --bin elpis -- --lib sdk/glass-ui-kit.js miniapps/glass-gallery/app.js --event tab:4 --ticks 3
+```
+
+### Foundational support added for the kit
+
+The kit drove a few additions to Elpis itself:
+
+- **Protocol** — a `GlassMaterial` primitive on `Style` (`glass_material`):
+  tint, backdrop blur, saturation, brightness, specular rim, radius and
+  elevation. The `Node → Blinc` lowering **expands** it into concrete paint (a
+  backdrop-blur + saturate `Filter`, a tinted translucent background, a rim
+  border, a radius and an elevation shadow) — only for the fields a node didn't
+  set itself — so a glass surface renders on any backend that honors those
+  fields. `Style::glass` stays a plain bool for the simplest case.
+- **Prelude** — new builders (`audio`, `component`) and paint/composition
+  helpers: `hex`/`hexA`/`withAlpha`, `linearGradient`/`radialGradient`/
+  `conicGradient`/`imageBrush`, `stop`, `shadow`, `glassMaterial`, and
+  `withKey`/`withStyle`/`bindEvents`/`withAnim`/`withTransition`.
+- **Host binary** — `--lib FILE` (repeatable) to compose a Miniapp from
+  reusable SDK sources, the sandbox-friendly substitute for `import`.
 
 ## Running
 

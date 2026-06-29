@@ -170,6 +170,25 @@ mod tests {
     }
 
     #[test]
+    fn glass_material_roundtrips_and_diffs() {
+        // A liquid-glass surface serializes, parses back identically, and a
+        // change to its material is a single style patch.
+        let mut a = container(vec![text("a", "x")]);
+        a.style.glass_material = Some(GlassMaterial::default());
+        let json = tree_to_json(&a);
+        assert!(json.contains("glass_material"), "material must serialize: {json}");
+        let back = parse_tree(&json).unwrap();
+        assert_eq!(a, back);
+
+        let mut b = a.clone();
+        b.style.glass_material = Some(GlassMaterial { blur: 40.0, ..GlassMaterial::default() });
+        let patches = diff(&a, &b);
+        assert_eq!(patches.len(), 1);
+        assert!(matches!(patches[0], Patch::Style { .. }));
+        assert_roundtrip(&a, &b);
+    }
+
+    #[test]
     fn hostcall_parses_args() {
         let raw = r#"{"machineId":"m1","apiName":"ui.render","payload":[{"type":"div"}]}"#;
         let hc = HostCall::parse(raw).unwrap();

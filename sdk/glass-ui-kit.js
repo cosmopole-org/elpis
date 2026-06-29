@@ -632,7 +632,7 @@ Glass.navbar = function (o) {
   var trailing = has(o, "trailing") ? o.trailing : [];
   var mat = Glass.material(Glass._d(o, "variant", "regular")); mat.radius = t.radius.lg;
   var bar = row({
-    style: { glass_material: mat, padding: { top: 12, right: 16, bottom: 12, left: 16 },
+    style: { glass_material: mat, width: { unit: "full" }, padding: { top: 12, right: 16, bottom: 12, left: 16 },
              align_items: "center", justify_content: "between" },
     children: [
       row({ style: { gap: 12, align_items: "center" }, children: leading }),
@@ -660,7 +660,7 @@ Glass.tabBar = function (o) {
     return cell;
   });
   var mat = Glass.material("thick"); mat.radius = t.radius.xl;
-  return Glass._fin(row({ style: { glass_material: mat, padding: { top: 10, right: 8, bottom: 10, left: 8 } }, children: cells }), o);
+  return Glass._fin(row({ style: { glass_material: mat, width: { unit: "full" }, padding: { top: 10, right: 8, bottom: 10, left: 8 } }, children: cells }), o);
 };
 
 // Content tabs (uses the native tabs widget with a glass frame).

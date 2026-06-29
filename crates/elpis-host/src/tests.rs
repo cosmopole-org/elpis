@@ -192,6 +192,7 @@ fn glass_gallery_boots_and_handles_events() {
         assert!(sb.frames() > before, "section {id} did not re-render (component {i} aborted the frame?)");
     }
     // The charts section renders ring/gauge/bar/line canvases.
+    sb.dispatch_event(&UiEvent::new("tab:4", "click", Value::Null)).unwrap();
     assert!(tree_json(&sb).contains("\"type\":\"canvas\""), "charts canvases missing");
 
     // Drive animation frames (blob wallpaper + 3D scene) — must not trap.

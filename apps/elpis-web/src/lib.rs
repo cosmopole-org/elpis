@@ -1,10 +1,14 @@
 //! Web (wasm32) entry point for the Elpis demo.
 //!
-//! Boots the bundled **showcase** Miniapp inside an Elpis sandbox whose backend
-//! is a Blinc [`BlincBackend`], then hands Blinc's `WebApp` the shared frame
-//! closure so the UI renders to a WebGPU `<canvas>` in the browser. This is the
-//! exact same sandbox + bridge + lowering used by the desktop and Android
-//! builds — only the platform run loop differs.
+//! Boots the bundled **Glass UI kit gallery** Miniapp inside an Elpis sandbox
+//! whose backend is a Blinc [`BlincBackend`], then hands Blinc's `WebApp` the
+//! shared frame closure so the UI renders to a WebGPU `<canvas>` in the
+//! browser. This is the exact same sandbox + bridge + lowering used by the
+//! desktop and Android builds — only the platform run loop differs.
+//!
+//! The gallery is built on the Glass UI kit SDK (`sdk/glass-ui-kit.js`); since
+//! the sandbox denies runtime module import, the kit source is **prepended** to
+//! the Miniapp here (the same composition the host binary does with `--lib`).
 //!
 //! Build with `wasm-pack build --target web --release` and serve the directory
 //! (the GitHub Pages workflow does this). The page must provide a
@@ -15,8 +19,10 @@ use wasm_bindgen::prelude::*;
 
 use elpis_blinc::{BlincBackend, Sandbox, SandboxConfig, SurfaceInfo};
 
-/// The demo Miniapp, bundled into the wasm artifact.
-const MINIAPP: &str = include_str!("../../../miniapps/showcase/app.js");
+/// The Glass UI kit SDK + the gallery Miniapp, bundled into the wasm artifact.
+/// The kit is prepended to the app (module import is denied in the sandbox).
+const GLASS_KIT: &str = include_str!("../../../sdk/glass-ui-kit.js");
+const GALLERY: &str = include_str!("../../../miniapps/glass-gallery/app.js");
 
 /// Fonts bundled so text shapes in the browser (browsers don't expose system
 /// fonts to the WebGPU pipeline). DejaVu Sans is the **sans-serif** family the
@@ -33,7 +39,7 @@ const CANVAS_ID: &str = "elpis-canvas";
 #[wasm_bindgen(start)]
 pub fn start() {
     console_error_panic_hook::set_once();
-    web_sys::console::log_1(&"elpis-web: booting showcase miniapp".into());
+    web_sys::console::log_1(&"elpis-web: booting Glass UI kit gallery".into());
 
     wasm_bindgen_futures::spawn_local(async {
         if let Err(e) = run().await {
@@ -49,7 +55,8 @@ async fn run() -> Result<(), String> {
     let (backend, shared) = BlincBackend::new(surface);
     let config = SandboxConfig { surface: Some(surface), ..SandboxConfig::new("elpis-web") };
 
-    let mut sandbox = Sandbox::from_js(config, MINIAPP, Box::new(backend))?;
+    let source = format!("{GLASS_KIT}\n// ---- gallery ----\n{GALLERY}");
+    let mut sandbox = Sandbox::from_js(config, &source, Box::new(backend))?;
     sandbox.boot()?;
 
     // 2. Hand Blinc's WebApp the shared per-frame closure. `run_with_setup`

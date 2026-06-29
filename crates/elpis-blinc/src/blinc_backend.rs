@@ -185,14 +185,42 @@ fn apply_style(mut d: Div, s: &BlincStyle) -> Div {
         d.set_padding_x((p.left + p.right) / 2.0);
         d.set_padding_y((p.top + p.bottom) / 2.0);
     }
-    if let Some(w) = s.width.and_then(length_px) {
-        d.set_w(w);
+    // Sizing. Pixels set an exact size; the relative units Blinc resolves at
+    // layout time map onto its dedicated helpers (full/auto/fit). Percent/fr/
+    // viewport units are left for the layout engine.
+    use elpis_protocol::style::Length;
+    if let Some(w) = s.width {
+        match w {
+            Length::Px(v) => d.set_w(v),
+            Length::Full => d = d.w_full(),
+            Length::Auto => d = d.w_auto(),
+            Length::Fit => d = d.w_fit(),
+            _ => {}
+        }
     }
-    if let Some(h) = s.height.and_then(length_px) {
-        d.set_h(h);
+    if let Some(h) = s.height {
+        match h {
+            Length::Px(v) => d.set_h(v),
+            Length::Full => d = d.h_full(),
+            Length::Auto => d = d.h_auto(),
+            Length::Fit => {} // no h_fit distinct from auto in practice
+            _ => {}
+        }
     }
     if let Some(g) = s.flex_grow {
         d = d.flex_grow_value(g);
+    }
+    // Positioning (modals/overlays/wallpapers rely on this).
+    if let Some(p) = s.position {
+        use elpis_protocol::style::Position;
+        d = match p {
+            Position::Absolute => d.absolute(),
+            Position::Fixed => d.fixed(),
+            Position::Relative | Position::Sticky => d.relative(),
+        };
+    }
+    if let Some(e) = s.inset {
+        d = d.top(e.top).right(e.right).bottom(e.bottom).left(e.left);
     }
     // Paint.
     if let Some(b) = &s.background {
@@ -209,6 +237,18 @@ fn apply_style(mut d: Div, s: &BlincStyle) -> Div {
     }
     for sh in &s.shadows {
         d.set_shadow(blinc_core_shadow(sh));
+    }
+    // The signature liquid-glass effect: blur whatever is rendered behind this
+    // surface. A `GlassMaterial` lowers to a `filter.backdrop_blur`; a bare
+    // `glass: true` falls back to Blinc's frosted-glass preset.
+    match &s.filter {
+        Some(f) if f.backdrop_blur > 0.0 => d = d.backdrop_blur(f.backdrop_blur),
+        Some(f) if f.blur > 0.0 => d = d.blur(f.blur),
+        _ => {
+            if s.glass {
+                d = d.glass();
+            }
+        }
     }
     if s.overflow_y == Some(elpis_protocol::style::Overflow::Scroll) {
         d = d.overflow_y_scroll();

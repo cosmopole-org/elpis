@@ -970,6 +970,28 @@ fn replay(ctx: &mut dyn DrawContext, bounds: CanvasBounds, ops: &[DrawOp]) {
     }
 }
 
+/// Mark the tree dirty **and wake the platform run loop** so it actually
+/// renders a frame.
+///
+/// `request_full_rebuild()` only sets flags (NEEDS_REBUILD / NEEDS_RELAYOUT /
+/// NEEDS_REDRAW). On desktop the winit loop sits in `ControlFlow::Wait`, and on
+/// mobile/web the loop parks between frames — a flag alone does **not** wake
+/// them, so the queued work (our `onEvent`) only runs on the next OS event
+/// (resize / app restore). `AnimationScheduler::request_redraw()` fires the
+/// scheduler's wake callback, which — per Blinc's own docs — "is the only thing
+/// that gets the main thread out of `ControlFlow::Wait`"; it's the same path
+/// Blinc's video / background-thread repaints use. The next frame then consumes
+/// `take_needs_rebuild()`, re-runs the build closure, drains the event, and
+/// paints the new tree.
+fn schedule_rebuild() {
+    blinc_layout::widgets::request_full_rebuild();
+    // `try_get_scheduler` avoids a panic if called before the platform has
+    // installed the global scheduler.
+    if let Some(scheduler) = blinc_animation::try_get_scheduler() {
+        scheduler.request_redraw();
+    }
+}
+
 /// Attach event handlers: each binding pushes a [`UiEvent`] into the shared
 /// queue so the host delivers it to the guest's `onEvent`.
 fn wire_events(mut d: Div, dom: &BlincDom, shared: &BlincShared) -> Div {
@@ -978,13 +1000,7 @@ fn wire_events(mut d: Div, dom: &BlincDom, shared: &BlincShared) -> Div {
         let events = shared.events.clone();
         d = d.on_click(move |_| {
             events.borrow_mut().push(UiEvent::click(handler.clone()));
-            // Blinc only re-invokes the build closure when the tree is marked
-            // dirty (otherwise it just repaints the retained tree, so the
-            // queued event would never reach the guest until the next resize).
-            // `request_full_rebuild` sets the rebuild + relayout flags and
-            // schedules a redraw, so the next frame drains the event, runs the
-            // guest's `onEvent`, and paints the new tree.
-            blinc_layout::widgets::request_full_rebuild();
+            schedule_rebuild();
         });
     }
     d
@@ -1007,22 +1023,29 @@ pub fn frame_closure(
 ) -> impl FnMut(&mut WindowedContext) -> Div + 'static {
     let sandbox = Rc::new(RefCell::new(sandbox));
     move |ctx: &mut WindowedContext| {
-        let pending: Vec<UiEvent> = std::mem::take(&mut shared.events.borrow_mut());
-        let animated = shared.animated.get();
-        if !pending.is_empty() || animated {
+        // 1. Deliver queued UI events to the guest (updates the retained dom),
+        //    then — if the resulting tree is animated — drive one tick.
+        {
+            let pending: Vec<UiEvent> = std::mem::take(&mut shared.events.borrow_mut());
             let mut sb = sandbox.borrow_mut();
             for ev in pending {
                 let _ = sb.dispatch_event(&ev);
             }
-            // Drive one animation frame for trees that want it (animated canvas
-            // / 3D scene), then ask Blinc to rebuild again next frame so the
-            // animation runs continuously. Idle trees skip this entirely, so
-            // the UI stays on-demand and cheap when nothing is moving.
-            if animated {
+            if shared.animated.get() {
                 let _ = sb.tick(16.0);
-                blinc_layout::widgets::request_full_rebuild();
             }
         }
+
+        // 2. Read the animation state AFTER dispatch/tick (the dom may have just
+        //    switched to/from an animated tree). Animated content re-arms a
+        //    rebuild + wakes the next frame each time, so animation runs
+        //    continuously at vsync; idle content drops back to on-demand (events
+        //    wake a frame through `schedule_rebuild`), so a static UI costs
+        //    nothing.
+        if shared.animated.get() {
+            schedule_rebuild();
+        }
+
         let root = shared.dom.borrow();
         let inner: Boxed = match root.as_ref() {
             Some(dom) => build(dom, &shared),

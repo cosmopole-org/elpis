@@ -25,10 +25,10 @@ use serde_json::Value;
 
 use blinc_app::windowed::WindowedContext;
 use blinc_core::{
-    Brush as BBrush, ClipShape, Color as BColor, CornerRadius as BCorner, DrawContext, Gradient,
-    GradientSpace, GradientSpread, GradientStop as BStop, LineCap as BLineCap, LineJoin as BLineJoin,
-    Path as BPath, Point as BPoint, Rect as BRect, Stroke as BStroke, TextStyle as BTextStyle,
-    Transform as BTransform,
+    BlurStyle, Brush as BBrush, ClipShape, Color as BColor, CornerRadius as BCorner, DrawContext,
+    Gradient, GradientSpace, GradientSpread, GradientStop as BStop, LineCap as BLineCap,
+    LineJoin as BLineJoin, Path as BPath, Point as BPoint, Rect as BRect, Stroke as BStroke,
+    TextStyle as BTextStyle, Transform as BTransform,
 };
 use blinc_app::TextAlign as LTextAlign;
 use blinc_layout::canvas::{canvas, Canvas, CanvasBounds};
@@ -241,8 +241,20 @@ fn apply_style(mut d: Div, s: &BlincStyle) -> Div {
     // The signature liquid-glass effect: blur whatever is rendered behind this
     // surface. A `GlassMaterial` lowers to a `filter.backdrop_blur`; a bare
     // `glass: true` falls back to Blinc's frosted-glass preset.
+    //
+    // NOTE: `Div::backdrop_blur(r)` sets the element's *background* to a blur
+    // brush, which would clobber the frosted tint set just above (leaving the
+    // surface a bare, near-invisible blur — the "outlined, fill-less panels"
+    // bug). So bake the tint into the blur brush instead, via a `BlurStyle`, so
+    // the panel reads as actual frosted glass: blurred backdrop + tint overlay.
     match &s.filter {
-        Some(f) if f.backdrop_blur > 0.0 => d = d.backdrop_blur(f.backdrop_blur),
+        Some(f) if f.backdrop_blur > 0.0 => {
+            let mut bs = BlurStyle::with_radius(f.backdrop_blur);
+            if let Some(Brush::Solid { color }) = &s.background {
+                bs = bs.tint(bcolor(*color));
+            }
+            d = d.backdrop_blur_style(bs);
+        }
         Some(f) if f.blur > 0.0 => d = d.blur(f.blur),
         _ => {
             if s.glass {

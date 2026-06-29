@@ -92,8 +92,8 @@ Glass.tokens = {
   bg1: hex("#0E1326"),
   bg2: hex("#1B1230"),
   // Glass material defaults.
-  glassTint: hexA("#FFFFFF", 0.12),
-  glassRim: hexA("#FFFFFF", 0.45),
+  glassTint: hexA("#FFFFFF", 0.18),
+  glassRim: hexA("#FFFFFF", 0.5),
   // Scales.
   radius: { sm: 10, md: 16, lg: 22, xl: 30, pill: 999, round: 9999 },
   blur: { thin: 8, regular: 18, thick: 32 },
@@ -120,8 +120,8 @@ Glass.material = function (v) {
   var tinted = function (c, alpha, blur, sat) {
     return glassMaterial(merge(base, { blur: blur, saturate: sat, tint: withAlpha(c, alpha), rim: withAlpha(c, 0.6) }));
   };
-  if (v == "clear") { return glassMaterial(merge(base, { blur: 10, saturate: 1.3, brightness: 1.12, tint: hexA("#FFFFFF", 0.05), elevation: 10 })); }
-  if (v == "thin") { return glassMaterial(merge(base, { blur: t.blur.thin, saturate: 1.4, tint: hexA("#FFFFFF", 0.08), elevation: 8 })); }
+  if (v == "clear") { return glassMaterial(merge(base, { blur: 10, saturate: 1.3, brightness: 1.12, tint: hexA("#FFFFFF", 0.08), elevation: 10 })); }
+  if (v == "thin") { return glassMaterial(merge(base, { blur: t.blur.thin, saturate: 1.4, tint: hexA("#FFFFFF", 0.12), elevation: 8 })); }
   if (v == "thick") { return glassMaterial(merge(base, { blur: t.blur.thick, saturate: 1.9, tint: hexA("#0B0E17", 0.42), elevation: 28 })); }
   if (v == "accent") { return tinted(t.accent, 0.28, 20, 2.0); }
   if (v == "danger") { return tinted(t.danger, 0.28, 20, 1.9); }

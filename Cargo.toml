@@ -31,6 +31,11 @@ repository = "https://github.com/cosmopole-org/elpis"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 once_cell = "1.19"
+# `std::time` shim that also compiles for `wasm32-unknown-unknown` (backs the
+# clock with `Date.now()`/`performance.now()` there; a plain re-export of
+# `std::time` everywhere else). Used by `elpis-host` so the web demo's clock
+# doesn't panic at boot. Already present transitively via Blinc.
+web-time = "1.1"
 
 # Internal crates.
 elpian-vm = { path = "crates/elpian-vm" }

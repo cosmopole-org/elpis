@@ -11,3 +11,9 @@ elpian-vm = { workspace = true }
 elpis-protocol = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# A `std::time` shim that also works on `wasm32-unknown-unknown`: on native it
+# re-exports `std::time` unchanged, but on wasm it backs `SystemTime`/`Instant`
+# with the browser's `Date.now()`/`performance.now()`. Bare `std::time` panics
+# on wasm ("time not implemented on this platform"), which crashed the web demo
+# at sandbox boot before the first frame. Already in the tree via Blinc.
+web-time = { workspace = true }

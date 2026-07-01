@@ -6,7 +6,7 @@
 
     <application
         android:allowBackup="true"
-        android:label="Elpis Demo"
+        android:label="${appLabel}"
         android:hardwareAccelerated="true"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
 

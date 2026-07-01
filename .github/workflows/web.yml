@@ -1,10 +1,13 @@
-# Build the Elpis web demo (the liquid glass gallery Miniapp — driven by the
-# Glass UI kit — running on the elpian-vm, rendered by Blinc's WebGPU backend)
-# to wasm and deploy it to GitHub Pages.
+# Build both Elpis web demos — the liquid glass gallery Miniapp (Glass UI kit)
+# at `/`, and the Material Design 3 gallery Miniapp (Material UI kit) at
+# `/material.html` — to wasm and deploy them together to GitHub Pages. Both
+# run on the elpian-vm and render with Blinc's WebGPU backend; the two pages
+# link to each other (see `apps/elpis-web/index.html` / `material.html`).
 #
 # One-time setup: in the repository Settings → Pages, set "Source" to
-# "GitHub Actions". The first run on the default branch then publishes the demo
-# at https://<owner>.github.io/<repo>/.
+# "GitHub Actions". The first run on the default branch then publishes the
+# glass demo at https://<owner>.github.io/<repo>/ and the material demo at
+# https://<owner>.github.io/<repo>/material.html.
 name: Deploy web demo to GitHub Pages
 
 on:
@@ -41,14 +44,19 @@ jobs:
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-      - name: Build the wasm bundle
+      - name: Build the glass demo wasm bundle
         run: wasm-pack build apps/elpis-web --target web --release --out-dir pkg
+
+      - name: Build the material demo wasm bundle
+        run: wasm-pack build apps/elpis-web --target web --release --out-dir pkg-material --features material_demo
 
       - name: Assemble the static site
         run: |
           mkdir -p _site
           cp apps/elpis-web/index.html _site/index.html
+          cp apps/elpis-web/material.html _site/material.html
           cp -r apps/elpis-web/pkg _site/pkg
+          cp -r apps/elpis-web/pkg-material _site/pkg-material
           # GitHub Pages otherwise runs the upload through Jekyll, which strips
           # files/dirs beginning with an underscore (none here, but be safe).
           touch _site/.nojekyll

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>Elpis · Glass UI kit demo</title>
+    <title>Elpis · Material UI kit demo</title>
     <style>
       html, body { margin: 0; height: 100%; background: #0a0b12; color: #cdd2e6;
         font-family: system-ui, sans-serif; overflow: hidden; }
@@ -21,7 +21,7 @@
     </style>
   </head>
   <body>
-    <div id="demo-switch">Glass UI kit demo · <a href="./material.html">try the Material UI kit demo →</a></div>
+    <div id="demo-switch">Material UI kit demo · <a href="./index.html">try the Glass UI kit demo →</a></div>
     <canvas id="elpis-canvas"></canvas>
     <div id="unsupported">
       <div class="wrap">
@@ -35,8 +35,8 @@
         document.getElementById('unsupported').style.display = 'grid';
         document.getElementById('elpis-canvas').style.display = 'none';
       } else {
-        import('./pkg/elpis_web.js').then((m) => m.default()).catch((e) => {
-          console.error('Failed to start Elpis web demo:', e);
+        import('./pkg-material/elpis_web.js').then((m) => m.default()).catch((e) => {
+          console.error('Failed to start Elpis Material UI kit demo:', e);
         });
       }
     </script>

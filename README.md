@@ -30,8 +30,8 @@ the Blinc GPU UI framework instead of Flutter.
 | **`crates/elpis-host`** | The **sandbox runtime**. Owns an `elpian-vm` instance, runs a JS Miniapp, and services every `askHost` UI call against a retained widget tree and a pluggable backend. Routes UI events back into the VM. Capabilities (net/fs/module-import) are **denied by default**. |
 | **`crates/elpis-blinc`** | The **Blinc backend**. A pure, tested lowering from the protocol tree to a blinc-flavored element description (`lower`), plus the live `blinc_layout`/`blinc_core` interpreter and windowed run loop behind the `blinc-backend` feature. |
 | **`apps/elpis-app`** | The host binary (`elpis`). Instantiates a sandbox, loads a Miniapp, and runs it — headless by default, or in a real Blinc window with `--features blinc`. Supports `--lib FILE` to prepend reusable SDK sources (e.g. the Glass UI kit). |
-| **`sdk/`** | **`glass-ui-kit.js`** — the **Glass UI kit**, a full "liquid glass" component SDK written in sandbox JS on top of the Blinc builders (see below). |
-| **`miniapps/`** | Example Miniapps written in JS (`counter`, `showcase`, `glass-gallery`). |
+| **`sdk/`** | **`glass-ui-kit.js`** — the **Glass UI kit**, a full "liquid glass" component SDK written in sandbox JS on top of the Blinc builders (see below). **`material-ui-kit.js`** — the **Material UI kit**, a Flutter-faithful Material Design 3 SDK built as a real widget class hierarchy (see below). |
+| **`miniapps/`** | Example Miniapps written in JS (`counter`, `showcase`, `glass-gallery`, `material-gallery`). |
 
 ## How the bridge works
 
@@ -180,6 +180,106 @@ The kit drove a few additions to Elpis itself:
 - **Host binary** — `--lib FILE` (repeatable) to compose a Miniapp from
   reusable SDK sources, the sandbox-friendly substitute for `import`.
 
+## The Material UI kit (`sdk/material-ui-kit.js`)
+
+A faithful **Material Design 3 / Flutter `material` library** SDK, independent
+of the Glass kit and built the opposite way: a genuine **object hierarchy**
+mirroring Flutter's own widget classes (`Widget` -> `StatelessWidget` /
+`StatefulWidget`, `build()` returning the render tree) rather than bare
+factory functions, using the engine's real `class`/`extends`/`super`. Flutter's
+public widget API — constructor properties, shapes, elevations, the type
+scale, motion tokens — is reproduced from the Material 3 spec as closely as
+the protocol's style/animation surface allows. It defines one global,
+`Material`, exposing both the classes (`Material.ElevatedButton`, `Material.
+Card`, …) and a lowercase factory wrapper per class (`Material.elevatedButton`,
+`Material.card`, …):
+
+- **Foundation** — `ColorScheme.fromSeed`/`.light`/`.dark` (Material You
+  dynamic color: five HSL tonal palettes sampled at the M3 tone-role table),
+  `TextTheme`/the M3 type scale, `ThemeData`, `Material.elevation`/`shape`/
+  `motion` design tokens, `Material.colors` (the classic named swatches),
+  `Material.icon` (Material icon names best-effort mapped onto the engine's
+  Tabler set).
+- **Core OOP** — `Widget`/`StatelessWidget`/`StatefulWidget`/`State`, plus
+  `Material.runApp`/`State.setState` wiring a `Theme.of`/`setState`-shaped
+  reactive loop on top of the engine's render-tree-diffing model.
+  `State.setState` re-renders **only that `State`'s own subtree** (it mutates
+  its last-built node's fields in place rather than asking any ancestor to
+  rebuild), so updating one widget deep in the tree never re-executes its
+  parents or siblings.
+- **Layout** — `Container`, `SizedBox`, `Center`, `Align`, `Padding`,
+  `Expanded`/`Flexible`, `Spacer`, `Wrap`, `Row`/`Column`, `Stack`/`Positioned`,
+  `ListView`(`.builder`/`.separated`), `GridView`(`.count`/`.builder`),
+  `SingleChildScrollView`, `Divider`/`VerticalDivider`.
+- **Surfaces** — `Card` (elevated/filled/outlined), `Scaffold`, `AppBar`,
+  `BottomAppBar`.
+- **Buttons** — `ElevatedButton`/`FilledButton`(`.tonal`)/`OutlinedButton`/
+  `TextButton`, `IconButton`(`.filled`/`.filledTonal`/`.outlined`),
+  `FloatingActionButton`(`.small`/`.large`/`.extended`), `ToggleButtons`,
+  `SegmentedButton`, `DropdownButton`, `PopupMenuButton`.
+- **Selection & input** — `Checkbox`/`CheckboxListTile`, `Radio<T>`/
+  `RadioListTile` (Flutter's own `value`/`groupValue` API), `Switch`/
+  `SwitchListTile`, `Slider`/`RangeSlider`, `TextField`/`TextFormField`.
+- **Chips** — `Chip`/`InputChip`/`ChoiceChip`/`FilterChip`/`ActionChip`.
+- **Indicators** — `LinearProgressIndicator`/`CircularProgressIndicator`,
+  `Badge`, `Tooltip`.
+- **Dialogs & overlays** — `AlertDialog`, `SimpleDialog`, `Dialog`,
+  `showDialog`, `BottomSheetWidget`/`showModalBottomSheet`, `SnackBar`.
+- **Navigation** — `BottomNavigationBar`, `NavigationBar`, `NavigationRail`,
+  `Drawer`/`NavigationDrawer`, `TabBar`/`TabBarView`, `Stepper`.
+- **Lists & data** — `ListTile`, `ExpansionTile`/`ExpansionPanelList`,
+  `DataTable`.
+- **Text & media** — `Text` (type-scale aware), `CircleAvatar`, `Image`.
+
+```js
+class CounterState extends State {
+  init() { this.state = { count: 0 }; }
+  build(widget) {
+    return Material.column({ children: [
+      Material.text({ text: "Count: " + this.state.count }),
+      Material.filledButton({ label: "+", onClick: () => this.setState({ count: this.state.count + 1 }) })
+    ] });
+  }
+}
+var counterState = new CounterState();
+Material.runApp(() => new StatefulWidget({ state: counterState }).build());
+```
+
+Every class is also a bare top-level identifier (`ElevatedButton`, `Card`,
+`Widget`, `State`, …), not just a `Material.*` property, because the engine's
+`class X extends Y` only parses a plain identifier after `extends` — so
+subclassing anything (a custom `StatefulWidget`/`State`, a specialized button)
+extends the bare name, as `CounterState` does above. Prefer `Material.*` for
+everyday calls; reserve the bare names for `extends`.
+
+Event props (`onClick`, `onChanged`, `onDestinationSelected`, …) take ordinary
+closures attached directly to the widget they belong to — there's no central
+`onEvent`/id-dispatch table to hand-write, and value-carrying callbacks
+receive the value directly (`onChanged: (checked) => { ... }`), exactly like
+Flutter's own `ValueChanged<T>`. The kit registers each closure and defines
+the guest `onEvent` itself; a Miniapp only needs its own `onEvent` if it wants
+extra top-level handling (call `Material.onEvent(ev)` from inside it to keep
+closures working).
+
+```bash
+cargo run --bin elpis -- --lib sdk/material-ui-kit.js miniapps/material-gallery/app.js
+```
+
+### A note on fidelity vs. the engine
+
+Elpis's native `checkbox`/`switch`/`radio`/`slider` widgets carry a fixed,
+host-side appearance the guest can't recolor (the protocol's `ToggleSpec`/
+`RadioSpec`/`SliderSpec` don't carry paint fields). Since exact Material color
+and shape fidelity is the point of this kit, `Checkbox`/`Switch`/`Radio` are
+reimplemented from scratch as plain divs + icons with click handlers (they're
+simple tap targets in Material, not drags, so nothing is lost); `Slider`/
+`TextField`/`DropdownButton` genuinely need native drag/caret handling the
+sandbox can't reimplement, so those wrap the native widgets and layer Material
+decoration around them. There's likewise no continuous pointer-tracking seam
+for a true animated ink ripple; `Material._ink` fakes one by mounting a
+freshly-keyed decorative circle (via a host-supplied `pulse` value) whose
+mount-triggered scale+fade animation approximates `InkWell`.
+
 ## Running
 
 ```bash
@@ -228,50 +328,61 @@ headless default path needs none of this.
 
 ## Demos: desktop, web, and Android
 
-The web demo (`apps/elpis-web`) boots the **Glass UI kit gallery** — it prepends
-`sdk/glass-ui-kit.js` to `miniapps/glass-gallery/app.js` (the same composition
-`elpis --lib` performs) and renders it to a WebGPU canvas. The live Blinc
-backend honors the kit's full surface: `full`/`auto`/`fit` sizing,
-absolute/fixed/relative positioning with insets, and **real `backdrop_blur`
-glass** (a `GlassMaterial` lowers to a tinted background + rim + `backdrop_blur`
-the backend applies via Blinc's frosted-glass path).
+Both UI kits ship a runnable gallery, and both the web and Android demo
+targets bundle **both** — a Cargo feature (`material_demo`, off by default)
+picks which one a given build embeds, so the same two crates produce four
+artifacts total (glass/material × web/Android). The live Blinc backend honors
+each kit's full surface: `full`/`auto`/`fit` sizing, absolute/fixed/relative
+positioning with insets, real `backdrop_blur` glass for the Glass kit
+(`GlassMaterial` lowers to a tinted background + rim + `backdrop_blur`), and
+the Material kit's shapes/elevation shadows/type scale.
 
 The same Elpis sandbox + bridge + `Node → Blinc` lowering drives three platform
 targets; only the run loop differs (each demo crate supplies its own `blinc_app`
-platform feature and calls the shared `elpis_blinc::frame_closure`). The **web**
-and **Android** demos boot the **liquid glass gallery** (`miniapps/glass-gallery`,
-driven by the Glass UI kit `sdk/glass-ui-kit.js`) — the kit is bundled ahead of
-the Miniapp at compile time (`concat!` over `include_str!`), the same prelude +
+platform feature and calls the shared `elpis_blinc::frame_closure`). For web
+and Android, the chosen gallery's kit is bundled ahead of the Miniapp at
+compile time (`concat!`/`format!` over `include_str!`) — the same prelude +
 kit + app composition the host binary's `--lib` produces:
 
 | Target | Crate | Run loop | Status |
 |--------|-------|----------|--------|
-| Desktop | `apps/elpis-app` (`--features blinc`) | `WindowedApp::run` | compiles against blinc 0.5.1 |
-| Web (wasm) | `apps/elpis-web` | `WebApp::run` (WebGPU canvas) | **compiles for `wasm32-unknown-unknown`** |
-| Android | `apps/elpis-android` | `AndroidApp::run` (NativeActivity) | built in CI via `cargo-ndk` + Gradle |
+| Desktop | `apps/elpis-app` (`--features blinc`) | `WindowedApp::run` | compiles against blinc 0.5.1; `--lib sdk/<kit>.js` picks the kit |
+| Web (wasm) | `apps/elpis-web` | `WebApp::run` (WebGPU canvas) | **compiles for `wasm32-unknown-unknown`**; `--features material_demo` picks the kit |
+| Android | `apps/elpis-android` | `AndroidApp::run` (NativeActivity) | built in CI via `cargo-ndk` + Gradle; `--features material_demo` picks the kit |
 
 ### GitHub workflows
 
-* **`.github/workflows/web.yml`** — builds `apps/elpis-web` with `wasm-pack`,
-  assembles a static site (`index.html` + `pkg/`), and deploys it to **GitHub
-  Pages**. One-time setup: repo *Settings → Pages → Source: GitHub Actions*.
-  The demo then lives at `https://<owner>.github.io/<repo>/`.
+* **`.github/workflows/web.yml`** — builds `apps/elpis-web` with `wasm-pack`
+  **twice** (default features → `pkg/`, `--features material_demo` →
+  `pkg-material/`), assembles a static site (`index.html` + `pkg/` for the
+  glass demo, `material.html` + `pkg-material/` for the Material demo, each
+  page links to the other), and deploys it to **GitHub Pages**. One-time
+  setup: repo *Settings → Pages → Source: GitHub Actions*. The demos then live
+  at `https://<owner>.github.io/<repo>/` (glass) and
+  `https://<owner>.github.io/<repo>/material.html` (Material).
 
-* **`.github/workflows/android.yml`** — cross-compiles `apps/elpis-android` to an
-  `arm64-v8a` `.so` with `cargo-ndk`, packages it into a debug APK with the
-  Gradle project under `apps/elpis-android/android/`, and **commits the APK to
-  the repository root** as `elpis-demo.apk` (also uploaded as a build artifact).
+* **`.github/workflows/android.yml`** — cross-compiles `apps/elpis-android` to
+  an `arm64-v8a` `.so` with `cargo-ndk` **twice** (default features, then
+  `--features material_demo`), packages each into a debug APK with the Gradle
+  project under `apps/elpis-android/android/` (a `-PdemoVariant=glass|material`
+  project property gives the two builds distinct `applicationId`s —
+  `org.cosmopole.elpis` / `org.cosmopole.elpis.material` — and labels, so both
+  install side by side on the same device), and **commits both APKs to the
+  repository root** as `elpis-demo.apk` (glass) and `elpis-demo-material.apk`
+  (Material) — also uploaded as build artifacts.
 
 Both also run on `workflow_dispatch`. They trigger on pushes to `main`, so they
-take effect once this branch is merged to the default branch.
+take effect once this branch is merged to the default branch (or run either
+one manually from the Actions tab against this branch to try both demos now).
 
-Build the web demo locally:
+Build a web demo locally (swap the two commands for the Material demo):
 
 ```bash
 rustup target add wasm32-unknown-unknown
 cargo install wasm-pack
-wasm-pack build apps/elpis-web --target web --release --out-dir pkg
-python3 -m http.server -d apps/elpis-web   # then open http://localhost:8000
+wasm-pack build apps/elpis-web --target web --release --out-dir pkg               # glass demo
+wasm-pack build apps/elpis-web --target web --release --out-dir pkg-material --features material_demo   # material demo
+python3 -m http.server -d apps/elpis-web   # then open http://localhost:8000/ (glass) or /material.html
 ```
 
 ## Sandboxing

@@ -1,22 +1,30 @@
-# Build the Elpis Android demo (the liquid glass gallery Miniapp — driven by the
-# Glass UI kit — running on the elpian-vm, rendered by Blinc's native WebGPU
-# backend) into an APK and publish it to the root of the repository as
-# `elpis-demo.apk`.
+# Build the Elpis Android demos — the liquid glass gallery Miniapp (Glass UI
+# kit) and the Material Design 3 gallery Miniapp (Material UI kit), both
+# running on the elpian-vm and rendered by Blinc's native WebGPU backend —
+# into two separately-installable APKs, and publish them to the root of the
+# repository as `elpis-demo.apk` (glass) and `elpis-demo-material.apk`
+# (material).
 #
 # The Rust crate `apps/elpis-android` is compiled to an arm64-v8a `.so` with
-# `cargo ndk`, then the Gradle project in `apps/elpis-android/android` packages
-# it (NativeActivity) into a debug-signed, installable APK.
+# `cargo ndk` — once with default features (glass) and once with `--features
+# material_demo` (material; see that crate's `src/lib.rs`) — then the Gradle
+# project in `apps/elpis-android/android` packages each `.so` (NativeActivity)
+# into a debug-signed APK. Gradle gets a `-PdemoVariant=glass|material`
+# project property each run so the two builds get distinct `applicationId`s
+# (`org.cosmopole.elpis[.material]`) and labels and can be installed side by
+# side on the same device (see `app/build.gradle.kts`).
 name: Build Android APK
 
 on:
   push:
     branches: [main]
-    # Don't retrigger on the commit that publishes the APK itself.
+    # Don't retrigger on the commit that publishes the APKs themselves.
     paths-ignore:
       - 'elpis-demo.apk'
+      - 'elpis-demo-material.apk'
   workflow_dispatch:
 
-# Needed to commit the built APK back to the repository root.
+# Needed to commit the built APKs back to the repository root.
 permissions:
   contents: write
 
@@ -50,7 +58,14 @@ jobs:
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --locked
 
-      - name: Build the Rust .so (arm64-v8a)
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      # ---- Glass demo (default features) ------------------------------------
+
+      - name: Build the Rust .so (arm64-v8a, glass demo)
         env:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
         run: |
@@ -58,28 +73,46 @@ jobs:
             -o apps/elpis-android/android/app/src/main/jniLibs \
             build --release -p elpis-android
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.10.2'
-
-      - name: Assemble the APK
+      - name: Assemble the glass APK
         working-directory: apps/elpis-android/android
-        run: gradle assembleDebug --no-daemon
+        run: gradle assembleDebug -PdemoVariant=glass --no-daemon
 
-      - name: Copy APK to repository root
+      - name: Copy glass APK to repository root
         run: |
           cp apps/elpis-android/android/app/build/outputs/apk/debug/app-debug.apk elpis-demo.apk
           ls -la elpis-demo.apk
 
-      - name: Publish APK to repository root
+      # ---- Material demo (--features material_demo) ------------------------
+
+      - name: Build the Rust .so (arm64-v8a, material demo)
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          cargo ndk -t arm64-v8a \
+            -o apps/elpis-android/android/app/src/main/jniLibs \
+            build --release -p elpis-android --features material_demo
+
+      - name: Assemble the material APK
+        working-directory: apps/elpis-android/android
+        run: gradle assembleDebug -PdemoVariant=material --no-daemon
+
+      - name: Copy material APK to repository root
+        run: |
+          cp apps/elpis-android/android/app/build/outputs/apk/debug/app-debug.apk elpis-demo-material.apk
+          ls -la elpis-demo-material.apk
+
+      # ---- Publish -----------------------------------------------------------
+
+      - name: Publish APKs to repository root
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "chore(ci): publish Android demo APK [skip ci]"
-          file_pattern: elpis-demo.apk
+          commit_message: "chore(ci): publish Android demo APKs [skip ci]"
+          file_pattern: elpis-demo.apk elpis-demo-material.apk
 
-      - name: Upload APK as a build artifact too
+      - name: Upload APKs as build artifacts too
         uses: actions/upload-artifact@v4
         with:
-          name: elpis-demo-apk
-          path: elpis-demo.apk
+          name: elpis-demo-apks
+          path: |
+            elpis-demo.apk
+            elpis-demo-material.apk

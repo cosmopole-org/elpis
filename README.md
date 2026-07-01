@@ -203,6 +203,10 @@ Card`, …) and a lowercase factory wrapper per class (`Material.elevatedButton`
 - **Core OOP** — `Widget`/`StatelessWidget`/`StatefulWidget`/`State`, plus
   `Material.runApp`/`State.setState` wiring a `Theme.of`/`setState`-shaped
   reactive loop on top of the engine's render-tree-diffing model.
+  `State.setState` re-renders **only that `State`'s own subtree** (it mutates
+  its last-built node's fields in place rather than asking any ancestor to
+  rebuild), so updating one widget deep in the tree never re-executes its
+  parents or siblings.
 - **Layout** — `Container`, `SizedBox`, `Center`, `Align`, `Padding`,
   `Expanded`/`Flexible`, `Spacer`, `Wrap`, `Row`/`Column`, `Stack`/`Positioned`,
   `ListView`(`.builder`/`.separated`), `GridView`(`.count`/`.builder`),
@@ -228,28 +232,37 @@ Card`, …) and a lowercase factory wrapper per class (`Material.elevatedButton`
 - **Text & media** — `Text` (type-scale aware), `CircleAvatar`, `Image`.
 
 ```js
-function view() {
-  return Material.scaffold({
-    appBar: Material.appBar({ title: "Inbox" }),
-    body: Material.card({ children: [
-      Material.text({ text: "Welcome", variant: "headlineSmall" }),
-      Material.filledButton({ label: "Continue", onClick: "go" })
-    ] })
-  });
+class CounterState extends State {
+  init() { this.state = { count: 0 }; }
+  build(widget) {
+    return Material.column({ children: [
+      Material.text({ text: "Count: " + this.state.count }),
+      Material.filledButton({ label: "+", onClick: () => this.setState({ count: this.state.count + 1 }) })
+    ] });
+  }
 }
-render(view());
+var counterState = new CounterState();
+Material.runApp(() => new StatefulWidget({ state: counterState }).build());
 ```
 
 Every class is also a bare top-level identifier (`ElevatedButton`, `Card`,
 `Widget`, `State`, …), not just a `Material.*` property, because the engine's
 `class X extends Y` only parses a plain identifier after `extends` — so
 subclassing anything (a custom `StatefulWidget`/`State`, a specialized button)
-extends the bare name, e.g. `class CounterState extends State { … }`. Prefer
-`Material.*` for everyday calls; reserve the bare names for `extends`.
+extends the bare name, as `CounterState` does above. Prefer `Material.*` for
+everyday calls; reserve the bare names for `extends`.
+
+Event props (`onClick`, `onChanged`, `onDestinationSelected`, …) take ordinary
+closures attached directly to the widget they belong to — there's no central
+`onEvent`/id-dispatch table to hand-write, and value-carrying callbacks
+receive the value directly (`onChanged: (checked) => { ... }`), exactly like
+Flutter's own `ValueChanged<T>`. The kit registers each closure and defines
+the guest `onEvent` itself; a Miniapp only needs its own `onEvent` if it wants
+extra top-level handling (call `Material.onEvent(ev)` from inside it to keep
+closures working).
 
 ```bash
 cargo run --bin elpis -- --lib sdk/material-ui-kit.js miniapps/material-gallery/app.js
-cargo run --bin elpis -- --lib sdk/material-ui-kit.js miniapps/material-gallery/app.js --event nav:2
 ```
 
 ### A note on fidelity vs. the engine

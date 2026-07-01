@@ -31,49 +31,67 @@
 // lowercase factory wrapper for terse call sites (`Material.elevatedButton`,
 // `Material.card`, …) — the two are equivalent:
 //
-//   function view() {
-//     return Material.scaffold({
-//       appBar: Material.appBar({ title: "Inbox" }),
-//       body: Material.card({ children: [
-//         Material.text({ text: "Welcome", variant: "headlineSmall" }),
-//         Material.filledButton({ label: "Continue", onClick: "go" })
-//       ] })
-//     });
+//   class CounterState extends State {
+//     init() { this.state = { count: 0 }; }
+//     build(widget) {
+//       return Material.column({ children: [
+//         Material.text({ text: "Count: " + this.state.count }),
+//         Material.filledButton({ label: "+", onClick: () => this.setState({ count: this.state.count + 1 }) })
+//       ] });
+//     }
 //   }
-//   render(view());
+//   var counterState = new CounterState();
+//   Material.runApp(() => new StatefulWidget({ state: counterState }).build());
 //
-//   // ...or the explicit OOP form:
-//   var btn = new Material.FilledButton({ label: "Continue", onClick: "go" }).build();
+// Note there is no hand-written `onEvent`/dispatch table anywhere above —
+// event props take ordinary closures (arrow functions read best here, since
+// they close over `this`/outer locals exactly like anywhere else in the
+// method), attached directly to the widget that owns the behavior, and
+// `State.setState` reads as the direct Flutter equivalent. See "Events and
+// `setState`" below for how that actually reaches the wire.
 //
 // Every class is also a bare top-level identifier (`ElevatedButton`, `Card`,
 // `Widget`, `State`, …), not just a `Material.*` property — because the
 // engine's `class X extends Y` only parses a plain identifier after
 // `extends`, never a member expression like `Material.Widget`. So to
 // subclass anything (build your own `StatefulWidget`/`State`, or specialize
-// a button), extend the bare name:
+// a button), extend the bare name, as `CounterState` does above. This does
+// mean ~60 fairly generic names (`Text`, `Card`, `Icon`, `Dialog`, `Switch`,
+// `State`, …) are bare globals in whatever script this file is prepended to,
+// not tucked behind one namespace like the Glass kit's `Glass` — an inherent
+// trade-off of supporting real `extends`-based inheritance in this engine.
+// Prefer the `Material.*` spelling for everyday calls (keeps call sites
+// self-documenting and sidesteps the risk entirely) and reserve the bare
+// names for the moments you actually need `extends`.
 //
-//   class CounterState extends State {
-//     init() { this.state = { count: 0 }; }
-//     build(widget) { return Material.text({ text: "" + this.state.count }); }
-//   }
-//   var counterState = new CounterState();
-//   Material.runApp(function () { return new StatefulWidget({ state: counterState }).build(); });
-//   function onEvent(ev) { if (ev.id == "inc") { counterState.setState({ count: counterState.state.count + 1 }); } }
+// Events and `setState`: closures, not a central dispatch table
+//   The wire protocol only carries a *string* handler id per event (the host
+//   calls the guest's one `onEvent({id,type,value})` entry point) — so
+//   historically a Miniapp hand-rolls an `if (ev.id == "...")` chain mapping
+//   ids back to behavior. This kit hides that seam: every event prop
+//   (`onClick`, `onChanged`, `onDismiss`, `onDestinationSelected`, …) takes
+//   an ordinary closure — `Material.filledButton({ label: "Save", onClick:
+//   () => save() })` — attached directly to the widget it belongs to, no
+//   central `onEvent` required (the kit defines the guest `onEvent` itself
+//   and dispatches to the right closure by its registered id). Callbacks
+//   that carry a value (`onChanged`, `onDestinationSelected`, …) receive that
+//   value directly as their first argument, exactly like Flutter's own
+//   `ValueChanged<T>` — never a raw wire event.
 //
-// This does mean ~60 fairly generic names (`Text`, `Card`, `Icon`, `Dialog`,
-// `Switch`, `State`, …) are bare globals in whatever script this file is
-// prepended to, not tucked behind one namespace like the Glass kit's `Glass`
-// — an inherent trade-off of supporting real `extends`-based inheritance in
-// this engine. Prefer the `Material.*` spelling for everyday calls (keeps
-// call sites self-documenting and sidesteps the risk entirely) and reserve
-// the bare names for the moments you actually need `extends`.
+//   `State.setState(patch)` re-renders *only that `State`'s own subtree*, not
+//   the whole app: it remembers the exact `Node` its last `build()` produced
+//   and mutates that node's fields in place, so whatever ancestor already
+//   holds a reference to it (a `children` array entry, …) sees the update
+//   with no ancestor `build()` re-run at all. `Material.runApp`/`.render()`
+//   remain for genuinely structural top-level changes (mounting a different
+//   screen); reach for a nested `StatefulWidget`/`State` for anything scoped
+//   to one part of the UI. See the "Core OOP framework" section below for
+//   the full mechanism (and why it doesn't leak memory across renders).
 //
 // Conventions
 //   * Every widget class takes a single `props` object in its constructor and
 //     exposes `build()`, which returns a plain render-tree node.
 //   * `props.children` is an array of child nodes (or a single node).
-//   * Event handlers are guest handler-id strings (`onClick`, `onChange`, …),
-//     exactly like the rest of the Elpis widget surface.
 //   * `props.style` is extra style shallow-merged in last; `props.key` sets
 //     the reconciliation key; `props.theme` overrides the ambient `ThemeData`
 //     for that one widget (defaults to `Material.theme()`).
@@ -496,18 +514,118 @@ Material.icon = function (o) {
 };
 
 // ===========================================================================
+// Event handlers — real closures, scoped registration.
+//
+// The wire protocol only carries a *string* handler id per event
+// (`crates/elpis-protocol/src/node.rs`'s `EventMap`); the host calls the
+// guest's single `onEvent({ id, type, value })` entry point and the guest
+// must map `id` back to behavior itself. Rather than making every Miniapp
+// author hand-roll that dispatch table, every widget below accepts an
+// ordinary closure directly on its event prop (`onClick: () => { ... }`) and
+// `Material._bindEvent` transparently registers it and wires up the id — the
+// closure lives entirely in this registry, never in the wire payload.
+//
+// Registration is *scoped* so the registry doesn't grow without bound across
+// renders: every rebuild — whether the app-level `Material.runApp` root or a
+// single `StatefulWidget`'s local `setState` (below) — first clears exactly
+// the handler ids it previously registered (its "scope", a stable prefix)
+// before rebuilding, so re-renders overwrite their own old handlers instead
+// of accumulating new ones forever, while every *other* scope's handlers
+// (siblings, ancestors) are left completely untouched.
+// ===========================================================================
+
+Material._handlers = {};       // "scope:seq" -> closure
+Material._scopeSeq = {};       // scope -> next sequence number
+Material._currentScope = "root";
+
+// Clears every handler previously registered under `scopeId` (its rebuild is
+// about to repopulate them), then runs `fn` with that scope active so any
+// widget built underneath registers under this id.
+Material._withScope = function (scopeId, fn) {
+  var prefix = scopeId + ":";
+  var ks = keys(Material._handlers);
+  for (var i = 0; i < len(ks); i = i + 1) {
+    if (startsWith(ks[i], prefix)) { delKey(Material._handlers, ks[i]); }
+  }
+  var prev = Material._currentScope;
+  Material._currentScope = scopeId;
+  var result = fn();
+  Material._currentScope = prev;
+  return result;
+};
+
+// Registers `fn` under the currently-building scope and returns its wire id.
+Material._registerHandler = function (fn) {
+  var scope = Material._currentScope;
+  var seq = get(Material._scopeSeq, scope, 0) + 1;
+  setKey(Material._scopeSeq, scope, seq);
+  var id = scope + ":" + seq;
+  setKey(Material._handlers, id, fn);
+  return id;
+};
+
+// The single place every widget attaches an event: `handler` is normally a
+// closure, but a raw string id (the old wire-level convention) still works
+// unchanged, so hand-written `Node`s built without this kit keep working.
+Material._bindEvent = function (node, eventName, handler) {
+  if (!handler) { return node; }
+  var id = typeOf(handler) == "function" ? Material._registerHandler(handler) : handler;
+  return on(node, eventName, id);
+};
+
+// Same as `Material._bindEvent`, but for callbacks that take an argument
+// (Flutter's `onDestinationSelected: (int index) {...}`,
+// `onExpansionChanged: (bool expanded) {...}`, …): a closure gets curried
+// with `arg` baked in; a raw string id (no way to carry an argument over the
+// wire) passes through unchanged for backward compatibility.
+Material._bindEventArg = function (node, eventName, handler, arg) {
+  if (!handler) { return node; }
+  if (typeOf(handler) == "function") { return Material._bindEvent(node, eventName, () => handler(arg)); }
+  return Material._bindEvent(node, eventName, handler);
+};
+
+// The guest entry point the host calls on every UI event. Defined here so a
+// Miniapp using only closures needs no `onEvent` of its own; one that needs
+// extra top-level handling should call `Material.onEvent(ev)` from within
+// its own `onEvent` to keep closure-based dispatch working.
+// Closures are called `(value, ev)` — the unwrapped payload first (Flutter's
+// own callbacks are always `(bool value)`/`(String value)`/…, never a raw
+// event object), with the full `{ id, type, value }` event as a second,
+// usually-ignored argument for the rare handler that needs it (e.g. reading
+// `ev.type` when one closure is bound to more than one event name).
+Material.onEvent = function (ev) {
+  var fn = get(Material._handlers, ev.id, null);
+  if (fn) { fn(ev.value, ev); }
+};
+function onEvent(ev) { return Material.onEvent(ev); }
+
+// ===========================================================================
 // Core OOP framework: `Widget` -> `StatelessWidget` / `StatefulWidget`, and a
-// minimal `State`/`runApp` loop. Every concrete widget below extends one of
-// these, exactly mirroring Flutter's own widget class hierarchy.
+// `State`/`setState` loop that re-renders *only the widget whose state
+// changed*, not the whole app.
 //
 // Because Elpis's render model has no persistent Element tree (a Miniapp's
 // own top-level variables are the only thing that survives across renders —
 // see `crates/elpis-host/src/prelude.js`), a `StatefulWidget`'s `State` must
 // be created and held by the host Miniapp itself (in a module-level var) and
 // threaded back in via `props.state`, exactly as `counter/app.js` holds
-// `count` at the top level. `Material.runApp` + `State.setState` wire that
-// pattern up so it feels like Flutter's `setState`: mutate, then the kit
-// re-renders the whole app for you.
+// `count` at the top level.
+//
+// The efficiency trick: every `StatefulWidget.build()` remembers the exact
+// `Node` object its `State` produced (`state._node`) and the object identity
+// of that node is what the *parent* widget's own return value embeds (in a
+// `children` array, a `body:` field, …). `State.setState` recomputes just
+// that `State`'s own subtree and then **mutates `state._node`'s fields in
+// place** — same object reference, new contents — rather than asking any
+// ancestor to rebuild and re-embed a new one. Every ancestor's `build()` that
+// already ran is never called again, so an update deep in the tree costs
+// exactly the work of rebuilding that one subtree, and the tree object
+// handed back to `render()` afterward is *structurally the same tree*
+// (unrelated branches are the literal same JS objects as before) — which
+// also means the host's own keyed diff (already the mechanism that limits
+// actual repainting to what changed) has nothing new to compare for anything
+// outside the updated subtree. `Material.render`/`runApp` remain available
+// for genuine structural changes (mounting/unmounting a whole screen).
 // ===========================================================================
 
 class Widget {
@@ -519,7 +637,11 @@ class Widget {
   finish(n) {
     if (has(this.props, "key")) { n.key = this.props.key; }
     if (has(this.props, "style")) { withStyle(n, this.props.style); }
-    if (has(this.props, "events")) { bindEvents(n, this.props.events); }
+    if (has(this.props, "events")) {
+      var evs = this.props.events;
+      var ks = keys(evs);
+      for (var i = 0; i < len(ks); i = i + 1) { Material._bindEvent(n, ks[i], get(evs, ks[i], null)); }
+    }
     return n;
   }
   build() { return this.finish(div({})); }
@@ -531,20 +653,35 @@ Material.StatelessWidget = StatelessWidget;
 
 // A Flutter-style `State<T>`: override `init()` and `build(widget)`.
 class State {
-  constructor() { this.state = {}; this._inited = false; }
+  constructor() {
+    this.state = {};
+    this._inited = false;
+    this._id = null;
+    this._scopeId = null;
+    this._node = null;
+    this._widget = null;
+  }
   init() { }
   // `patch` is either an object shallow-merged into `state`, or a function
-  // `(state) -> object` for functional updates — then triggers a full re-render
-  // via `Material.runApp`'s stored root builder (Flutter's `setState`).
+  // `(state) -> object` for functional updates (Flutter's `setState`). Only
+  // this widget's own subtree is recomputed — see the class doc above.
   setState(patch) {
     var next = typeOf(patch) == "object" ? patch : patch(this.state);
     this.state = merge(this.state, next);
-    Material._rebuild();
+    this._rebuildLocal();
     return this.state;
+  }
+  _rebuildLocal() {
+    if (!this._node || !this._scopeId) { Material._rebuild(); return; }
+    var fresh = Material._withScope(this._scopeId, () => this.build(this._widget));
+    Material._mutateNode(this._node, fresh);
+    Material._flush();
   }
   build(widget) { return div({}); }
 }
 Material.State = State;
+
+Material._nextStateId = 0;
 
 // `props.state` must be a `State` instance the host keeps alive across
 // renders (a module-level `var`); `createState()` is only consulted the very
@@ -553,22 +690,56 @@ class StatefulWidget extends Widget {
   createState() { return new State(); }
   build() {
     var s = has(this.props, "state") ? this.props.state : this.createState();
-    if (!s._inited) { s._inited = true; s.init(); }
-    return this.finish(s.build(this));
+    if (!s._inited) {
+      s._inited = true;
+      s._id = Material._nextStateId;
+      Material._nextStateId = Material._nextStateId + 1;
+      s.init();
+    }
+    s._widget = this;
+    s._scopeId = "s" + s._id;
+    var node = Material._withScope(s._scopeId, () => s.build(s._widget));
+    s._node = node;
+    return this.finish(node);
   }
 }
 Material.StatefulWidget = StatefulWidget;
 
+// Copies `fresh`'s fields onto `target` *in place*, preserving `target`'s
+// object identity (any ancestor node already holding a reference to it sees
+// the update automatically, with no ancestor `build()` re-run required).
+Material._mutateNode = function (target, fresh) {
+  var oldKeys = keys(target);
+  for (var i = 0; i < len(oldKeys); i = i + 1) {
+    if (!has(fresh, oldKeys[i])) { delKey(target, oldKeys[i]); }
+  }
+  var newKeys = keys(fresh);
+  for (var j = 0; j < len(newKeys); j = j + 1) {
+    setKey(target, newKeys[j], get(fresh, newKeys[j], null));
+  }
+};
+
 Material._root = null;
-// The `runApp(widget)` equivalent: remembers a zero-arg builder function and
-// renders it. Call `Material._rebuild()` (or let `State.setState` do it) to
-// re-render after mutating state held outside the tree.
+Material._tree = null;
+// The `runApp(widget)` equivalent: remembers a zero-arg builder function,
+// builds the whole app under the reserved `"root"` scope, and renders it.
+// `Material.render` is an alias (pass the zero-arg builder, not a built
+// tree) for call sites that don't otherwise need the `runApp` name.
 Material.runApp = function (rootBuilderFn) {
   Material._root = rootBuilderFn;
   Material._rebuild();
 };
+Material.render = Material.runApp;
+// Full top-level re-render: use this for genuinely structural app-level
+// changes (mounting/unmounting a whole screen). Prefer a `State.setState`
+// for anything scoped to one widget — see the class doc above.
 Material._rebuild = function () {
-  if (Material._root) { render(Material._root()); }
+  if (!Material._root) { return; }
+  Material._tree = Material._withScope("root", Material._root);
+  Material._flush();
+};
+Material._flush = function () {
+  if (Material._tree) { render(Material._tree); }
 };
 
 // ===========================================================================
@@ -1044,7 +1215,7 @@ class _ButtonBase extends StatelessWidget {
     if (has(this.props, "pulse")) { inkOpts.pulse = this.props.pulse; }
     var inner = Material._ink(row({ style: { align_items: "center", justify_content: "center", gap: 8 }, children: content }), inkOpts);
     var n = row({ style: st, children: [inner] });
-    if (has(this.props, "onClick") && !disabled) { on(n, "click", this.props.onClick); }
+    if (has(this.props, "onClick") && !disabled) { Material._bindEvent(n, "click", this.props.onClick); }
     return this.finish(n);
   }
 }
@@ -1103,7 +1274,7 @@ class IconButton extends StatelessWidget {
     if (has(this.props, "pulse")) { inkOpts.pulse = this.props.pulse; }
     var glyph = icon(get(Material._iconMap, this.opt("icon", "circle"), this.opt("icon", "circle")), { size: sz * 0.55, color: fgc });
     var n = row({ style: st, children: [Material._ink(glyph, inkOpts)] });
-    if (has(this.props, "onClick") && !disabled) { on(n, "click", this.props.onClick); }
+    if (has(this.props, "onClick") && !disabled) { Material._bindEvent(n, "click", this.props.onClick); }
     return this.finish(n);
   }
   static filled(o) { return new IconButton(merge(Material._opt(o), { variant: "filled" })).build(); }
@@ -1140,7 +1311,7 @@ class FloatingActionButton extends StatelessWidget {
     if (has(this.props, "pulse")) { inkOpts.pulse = this.props.pulse; }
     var inner = Material._ink(row({ style: { align_items: "center", justify_content: "center", gap: 12 }, children: content }), inkOpts);
     var n = row({ style: st, children: [inner] });
-    if (has(this.props, "onClick")) { on(n, "click", this.props.onClick); }
+    if (has(this.props, "onClick")) { Material._bindEvent(n, "click", this.props.onClick); }
     return this.finish(n);
   }
   static small(o) { return new FloatingActionButton(merge(Material._opt(o), { size: "small" })).build(); }
@@ -1166,7 +1337,7 @@ class ToggleButtons extends StatelessWidget {
     });
     var st2 = { border_width: 1, border_color: cs.outline, radius: Material._corner(Material.shape.small), overflow_x: "hidden", overflow_y: "hidden" };
     var n = row({ style: st2, children: cells });
-    if (has(this.props, "onPressed")) { on(n, "click", this.props.onPressed); }
+    if (has(this.props, "onPressed")) { Material._bindEvent(n, "click", this.props.onPressed); }
     return this.finish(n);
   }
 }
@@ -1180,6 +1351,7 @@ class SegmentedButton extends StatelessWidget {
     var cs = th.colorScheme;
     var segments = this.opt("segments", []);
     var selected = this.opt("selected", []);
+    var onSelectionChanged = this.opt("onSelectionChanged", null);
     var cells = Material._map(segments, function (seg, i) {
       var active = contains(selected, seg.value);
       var st = { padding: { top: 10, right: 16, bottom: 10, left: 16 }, align_items: "center", justify_content: "center",
@@ -1190,11 +1362,11 @@ class SegmentedButton extends StatelessWidget {
       else if (has(seg, "icon")) { push(kids, icon(get(Material._iconMap, seg.icon, seg.icon), { size: 16, color: cs.onSurface })); }
       push(kids, new MaterialText({ text: seg.label, variant: "labelLarge", color: active ? cs.onSecondaryContainer : cs.onSurface }).build());
       var cell = row({ style: st, children: kids });
+      Material._bindEventArg(cell, "click", onSelectionChanged, seg.value);
       return cell;
     });
     var st2 = { border_width: 1, border_color: cs.outline, radius: Material._corner(Material.shape.small), overflow_x: "hidden", overflow_y: "hidden" };
     var track = row({ style: st2, children: cells });
-    if (has(this.props, "onSelectionChanged")) { on(track, "change", this.props.onSelectionChanged); }
     return this.finish(track);
   }
 }
@@ -1216,7 +1388,7 @@ class DropdownButton extends StatelessWidget {
     props.disabled = this.opt("disabled", false);
     props.style = { border_width: 0, foreground: cs.onSurface, padding: { top: 4, right: 4, bottom: 8, left: 4 } };
     var n = dropdown(props);
-    if (has(this.props, "onChanged")) { on(n, "change", this.props.onChanged); }
+    if (has(this.props, "onChanged")) { Material._bindEvent(n, "change", this.props.onChanged); }
     return this.finish(n);
   }
 }
@@ -1236,7 +1408,7 @@ class PopupMenuButton extends StatelessWidget {
       var items = Material._map(this.opt("items", []), function (it) {
         var st = { padding: { top: 10, right: 16, bottom: 10, left: 16 }, gap: 10, align_items: "center", cursor: "pointer" };
         var cell = row({ style: st, children: [new MaterialText({ text: it.label, variant: "bodyLarge", color: cs.onSurface }).build()] });
-        if (has(it, "onSelect")) { on(cell, "click", it.onSelect); }
+        if (has(it, "onSelect")) { Material._bindEvent(cell, "click", it.onSelect); }
         return cell;
       });
       var menu = column({ style: { background: solid(cs.surfaceContainer), radius: Material._corner(Material.shape.extraSmall),
@@ -1244,7 +1416,7 @@ class PopupMenuButton extends StatelessWidget {
                                     min_width: Material._len(160) },
                           children: items });
       var ov = overlay({ layer: "popover", backdrop: false, dismissible: true, children: [menu] });
-      if (has(this.props, "onDismiss")) { on(ov, "dismiss", this.props.onDismiss); }
+      if (has(this.props, "onDismiss")) { Material._bindEvent(ov, "dismiss", this.props.onDismiss); }
       push(kids, ov);
     }
     return this.finish(stack({ children: kids }));
@@ -1283,7 +1455,7 @@ class Checkbox extends StatelessWidget {
     var inkOpts = { color: withAlpha(cs.primary, 0.16), radius: Material._corner(9999) };
     if (has(this.props, "pulse")) { inkOpts.pulse = this.props.pulse; }
     var n = Material._ink(row({ style: st, children: kids }), inkOpts);
-    if (has(this.props, "onChanged") && !disabled) { on(n, "click", this.props.onChanged); }
+    if (has(this.props, "onChanged") && !disabled) { Material._bindEvent(n, "click", this.props.onChanged); }
     return this.finish(n);
   }
 }
@@ -1302,7 +1474,7 @@ Material._tileRow = function (leading, title, subtitle, trailing, th, onClick) {
   var st = { padding: { top: 8, right: 16, bottom: 8, left: 16 }, gap: 16, align_items: "center" };
   if (onClick) { st.cursor = "pointer"; }
   var n = row({ style: st, children: kids });
-  if (onClick) { on(n, "click", onClick); }
+  if (onClick) { Material._bindEvent(n, "click", onClick); }
   return n;
 };
 
@@ -1346,7 +1518,7 @@ class Radio extends StatelessWidget {
     var inkOpts = { color: withAlpha(cs.primary, 0.16), radius: Material._corner(9999) };
     if (has(this.props, "pulse")) { inkOpts.pulse = this.props.pulse; }
     var n = Material._ink(row({ style: st, children: kids }), inkOpts);
-    if (has(this.props, "onChanged") && !disabled) { on(n, "click", this.props.onChanged); }
+    if (has(this.props, "onChanged") && !disabled) { Material._bindEvent(n, "click", this.props.onChanged); }
     return this.finish(n);
   }
 }
@@ -1398,7 +1570,7 @@ class Switch extends StatelessWidget {
       transition: { curve: Material.tween(Material.motion.duration.short4, "ease_in_out"), enabled: true }
     });
     var n = row({ style: st, children: [thumb] });
-    if (has(this.props, "onChanged") && !disabled) { on(n, "click", this.props.onChanged); }
+    if (has(this.props, "onChanged") && !disabled) { Material._bindEvent(n, "click", this.props.onChanged); }
     return this.finish(n);
   }
 }
@@ -1432,7 +1604,7 @@ class Slider extends StatelessWidget {
     if (has(this.props, "divisions")) { props.step = (this.opt("max", 1) - this.opt("min", 0)) / this.props.divisions; }
     props.disabled = this.opt("disabled", false);
     var n = slider(props);
-    if (has(this.props, "onChanged")) { on(n, "change", this.props.onChanged); }
+    if (has(this.props, "onChanged")) { Material._bindEvent(n, "change", this.props.onChanged); }
     return this.finish(n);
   }
 }
@@ -1446,7 +1618,7 @@ class RangeSlider extends StatelessWidget {
     if (has(this.props, "divisions")) { props.step = (this.opt("max", 1) - this.opt("min", 0)) / this.props.divisions; }
     props.disabled = this.opt("disabled", false);
     var n = slider(props);
-    if (has(this.props, "onChanged")) { on(n, "change", this.props.onChanged); }
+    if (has(this.props, "onChanged")) { Material._bindEvent(n, "change", this.props.onChanged); }
     return this.finish(n);
   }
 }
@@ -1479,8 +1651,8 @@ class TextField extends StatelessWidget {
     }
     props.style = st;
     var input = textInput(props);
-    if (has(this.props, "onChanged")) { on(input, "input", this.props.onChanged); }
-    if (has(this.props, "onSubmitted")) { on(input, "submit", this.props.onSubmitted); }
+    if (has(this.props, "onChanged")) { Material._bindEvent(input, "input", this.props.onChanged); }
+    if (has(this.props, "onSubmitted")) { Material._bindEvent(input, "submit", this.props.onSubmitted); }
     var kids = [];
     if (has(this.props, "labelText")) { push(kids, new MaterialText({ text: this.props.labelText, variant: "bodySmall", color: cs.onSurfaceVariant }).build()); }
     push(kids, input);
@@ -1522,11 +1694,11 @@ class Chip extends StatelessWidget {
     push(kids, new MaterialText({ text: this.opt("label", ""), variant: "labelLarge", color: fg }).build());
     if (this.opt("deletable", false) || has(this.props, "onDeleted")) {
       var delIcon = icon("close", { size: 16, color: fg });
-      if (has(this.props, "onDeleted")) { on(delIcon, "click", this.props.onDeleted); }
+      if (has(this.props, "onDeleted")) { Material._bindEvent(delIcon, "click", this.props.onDeleted); }
       push(kids, delIcon);
     }
     var n = row({ style: st, children: kids });
-    if (has(this.props, "onClick") && !disabled) { on(n, "click", this.props.onClick); }
+    if (has(this.props, "onClick") && !disabled) { Material._bindEvent(n, "click", this.props.onClick); }
     return this.finish(n);
   }
 }
@@ -1685,7 +1857,7 @@ class AlertDialog extends StatelessWidget {
     var ov = overlay({ layer: "modal", backdrop: true, dismissible: this.opt("barrierDismissible", true),
                        style: { align_items: "center", justify_content: "center", padding: Material._edges(24) },
                        children: [sheet] });
-    if (has(this.props, "onDismiss")) { on(ov, "dismiss", this.props.onDismiss); }
+    if (has(this.props, "onDismiss")) { Material._bindEvent(ov, "dismiss", this.props.onDismiss); }
     return this.finish(ov);
   }
 }
@@ -1698,7 +1870,7 @@ Material.simpleDialogOption = function (o) {
   var cs = Material.theme().colorScheme;
   var n = row({ style: { padding: { top: 12, right: 24, bottom: 12, left: 24 }, cursor: "pointer" },
                 children: [new MaterialText({ text: Material._d(o, "text", ""), variant: "bodyLarge", color: cs.onSurface }).build()] });
-  if (has(o, "onClick")) { on(n, "click", o.onClick); }
+  if (has(o, "onClick")) { Material._bindEvent(n, "click", o.onClick); }
   return n;
 };
 
@@ -1719,7 +1891,7 @@ class SimpleDialog extends StatelessWidget {
     var ov = overlay({ layer: "modal", backdrop: true, dismissible: this.opt("barrierDismissible", true),
                        style: { align_items: "center", justify_content: "center", padding: Material._edges(24) },
                        children: [sheet] });
-    if (has(this.props, "onDismiss")) { on(ov, "dismiss", this.props.onDismiss); }
+    if (has(this.props, "onDismiss")) { Material._bindEvent(ov, "dismiss", this.props.onDismiss); }
     return this.finish(ov);
   }
 }
@@ -1740,7 +1912,7 @@ class Dialog extends StatelessWidget {
     var ov = overlay({ layer: "modal", backdrop: true, dismissible: this.opt("barrierDismissible", true),
                        style: { align_items: "center", justify_content: "center", padding: Material._edges(24) },
                        children: [sheet] });
-    if (has(this.props, "onDismiss")) { on(ov, "dismiss", this.props.onDismiss); }
+    if (has(this.props, "onDismiss")) { Material._bindEvent(ov, "dismiss", this.props.onDismiss); }
     return this.finish(ov);
   }
 }
@@ -1757,7 +1929,7 @@ Material.showDialog = function (o) {
   var ov = overlay({ layer: "modal", backdrop: true, dismissible: Material._d(o, "barrierDismissible", true),
                      style: { align_items: "center", justify_content: "center", padding: Material._edges(24) },
                      children: [content] });
-  if (has(o, "onDismiss")) { on(ov, "dismiss", o.onDismiss); }
+  if (has(o, "onDismiss")) { Material._bindEvent(ov, "dismiss", o.onDismiss); }
   return ov;
 };
 
@@ -1779,7 +1951,7 @@ class BottomSheetWidget extends StatelessWidget {
     if (!this.opt("modal", true)) { return this.finish(sheet); }
     var ov = overlay({ layer: "modal", backdrop: true, dismissible: this.opt("dismissible", true),
                        style: { align_items: "stretch", justify_content: "end" }, children: [sheet] });
-    if (has(this.props, "onDismiss")) { on(ov, "dismiss", this.props.onDismiss); }
+    if (has(this.props, "onDismiss")) { Material._bindEvent(ov, "dismiss", this.props.onDismiss); }
     return this.finish(ov);
   }
 }
@@ -1832,7 +2004,7 @@ class BottomNavigationBar extends StatelessWidget {
         children: [icon(get(Material._iconMap, it.icon, it.icon), { size: 24, color: color }),
                    new MaterialText({ text: it.label, variant: "labelSmall", color: color }).build()]
       });
-      if (onTap) { on(cell, "click", onTap + ":" + i); }
+      if (onTap) { Material._bindEventArg(cell, "click", onTap, i); }
       return cell;
     });
     var st = { width: Material._len("full"), height: Material._len(80), align_items: "center",
@@ -1867,7 +2039,7 @@ class NavigationBar extends StatelessWidget {
                  padding: { top: 12, right: 0, bottom: 16, left: 0 } },
         children: [indicator, new MaterialText({ text: it.label, variant: "labelMedium", color: active ? cs.onSurface : cs.onSurfaceVariant }).build()]
       });
-      if (onSelect) { on(cell, "click", onSelect + ":" + i); }
+      if (onSelect) { Material._bindEventArg(cell, "click", onSelect, i); }
       return cell;
     });
     var st = { width: Material._len("full"), height: Material._len(80), align_items: "center",
@@ -1906,7 +2078,7 @@ class NavigationRail extends StatelessWidget {
       var cell = extended
         ? row({ style: { align_items: "center", cursor: "pointer" }, children: kids })
         : column({ style: { align_items: "center", gap: 4, cursor: "pointer", padding: { top: 12, right: 0, bottom: 12, left: 0 } }, children: kids });
-      if (onSelect) { on(cell, "click", onSelect + ":" + i); }
+      if (onSelect) { Material._bindEventArg(cell, "click", onSelect, i); }
       return cell;
     });
     var kids2 = [];
@@ -1935,7 +2107,7 @@ class Drawer extends StatelessWidget {
       if (has(it, "icon")) { push(kids, icon(get(Material._iconMap, it.icon, it.icon), { size: 24, color: active ? cs.onSecondaryContainer : cs.onSurfaceVariant })); }
       push(kids, new MaterialText({ text: it.label, variant: "labelLarge", color: active ? cs.onSecondaryContainer : cs.onSurfaceVariant }).build());
       var row_ = row({ style: st, children: kids });
-      if (has(it, "onClick")) { on(row_, "click", it.onClick); }
+      if (has(it, "onClick")) { Material._bindEvent(row_, "click", it.onClick); }
       return row_;
     });
     var kids2 = [];
@@ -1949,7 +2121,7 @@ class Drawer extends StatelessWidget {
     if (!this.opt("modal", true)) { return this.finish(sheet); }
     var ov = overlay({ layer: "modal", backdrop: true, dismissible: this.opt("dismissible", true),
                        style: { align_items: "stretch", justify_content: this.opt("end", false) ? "end" : "start" }, children: [sheet] });
-    if (has(this.props, "onDismiss")) { on(ov, "dismiss", this.props.onDismiss); }
+    if (has(this.props, "onDismiss")) { Material._bindEvent(ov, "dismiss", this.props.onDismiss); }
     return this.finish(ov);
   }
 }
@@ -1983,7 +2155,7 @@ class TabBar extends StatelessWidget {
                  padding: { top: 12, right: 16, bottom: 0, left: 16 } },
         children: [row({ style: { gap: 8, align_items: "center" }, children: content }), indicator]
       });
-      if (onSelect) { on(cell, "click", onSelect + ":" + i); }
+      if (onSelect) { Material._bindEventArg(cell, "click", onSelect, i); }
       return cell;
     });
     var st = { width: Material._len("full"), align_items: "stretch",
@@ -2020,7 +2192,7 @@ class Stepper extends StatelessWidget {
       var marker = column({ style: { align_items: "center", gap: 0 }, children: line ? [circle, line] : [circle] });
       var header = row({ style: { gap: 8, align_items: "center", cursor: onTap ? "pointer" : "default" },
                           children: [new MaterialText({ text: s.title, variant: "titleMedium", color: cs.onSurface }).build()] });
-      if (onTap) { on(header, "click", onTap + ":" + i); }
+      if (onTap) { Material._bindEventArg(header, "click", onTap, i); }
       var bodyKids = [header];
       if (active && has(s, "content")) { push(bodyKids, div({ style: { padding: { top: 8, right: 0, bottom: 16, left: 0 } }, children: [s.content] })); }
       var body = column({ style: { gap: 4, flex_grow: 1, padding: { top: 0, right: 0, bottom: 8, left: 16 } }, children: bodyKids });
@@ -2059,7 +2231,7 @@ class ListTile extends StatelessWidget {
     var clickable = has(this.props, "onClick") && enabled;
     if (clickable) { st.cursor = "pointer"; }
     var n = row({ style: st, children: kids });
-    if (clickable) { on(n, "click", this.props.onClick); }
+    if (clickable) { Material._bindEvent(n, "click", this.props.onClick); }
     return this.finish(n);
   }
 }
@@ -2081,7 +2253,7 @@ class ExpansionTile extends StatelessWidget {
       children: [row({ style: { gap: 16, align_items: "center" }, children: leftKids }),
                  icon(expanded ? "expand_less" : "expand_more", { size: 24, color: cs.onSurfaceVariant })]
     });
-    if (has(this.props, "onExpansionChanged")) { on(header, "click", this.props.onExpansionChanged); }
+    if (has(this.props, "onExpansionChanged")) { Material._bindEventArg(header, "click", this.props.onExpansionChanged, !expanded); }
     var kids = [header];
     if (expanded) { push(kids, column({ style: { padding: { top: 0, right: 16, bottom: 16, left: 16 }, gap: 8 }, children: this.kids() })); }
     return this.finish(column({ style: { gap: 0 }, children: kids }));
@@ -2098,7 +2270,7 @@ class ExpansionPanelList extends StatelessWidget {
     var onChanged = this.opt("expansionCallback", this.opt("onExpansionChanged", null));
     var rows = Material._map(panels, function (p, i) {
       var props = merge({}, p);
-      if (onChanged) { props.onExpansionChanged = onChanged + ":" + i; }
+      if (onChanged) { props.onExpansionChanged = (isExp) => onChanged(i, isExp); }
       return new ExpansionTile(props).build();
     });
     return this.finish(column({ style: { gap: 8 }, children: rows }));
@@ -2134,7 +2306,10 @@ class DataTable extends StatelessWidget {
       var rowSt = { align_items: "center" };
       if (rIsObj && has(r, "selected") && r.selected) { rowSt.background = solid(cs.secondaryContainer); }
       var rowNode = row({ style: rowSt, children: cells });
-      if (rIsObj && has(r, "onSelectChanged")) { on(rowNode, "click", r.onSelectChanged); }
+      if (rIsObj && has(r, "onSelectChanged")) {
+        var wasSelected = has(r, "selected") && r.selected;
+        Material._bindEventArg(rowNode, "click", r.onSelectChanged, !wasSelected);
+      }
       push(flatRows, rowNode);
       if (i < len(rows) - 1) { push(flatRows, divider()); }
     }

@@ -30,8 +30,8 @@ the Blinc GPU UI framework instead of Flutter.
 | **`crates/elpis-host`** | The **sandbox runtime**. Owns an `elpian-vm` instance, runs a JS Miniapp, and services every `askHost` UI call against a retained widget tree and a pluggable backend. Routes UI events back into the VM. Capabilities (net/fs/module-import) are **denied by default**. |
 | **`crates/elpis-blinc`** | The **Blinc backend**. A pure, tested lowering from the protocol tree to a blinc-flavored element description (`lower`), plus the live `blinc_layout`/`blinc_core` interpreter and windowed run loop behind the `blinc-backend` feature. |
 | **`apps/elpis-app`** | The host binary (`elpis`). Instantiates a sandbox, loads a Miniapp, and runs it — headless by default, or in a real Blinc window with `--features blinc`. Supports `--lib FILE` to prepend reusable SDK sources (e.g. the Glass UI kit). |
-| **`sdk/`** | **`glass-ui-kit.js`** — the **Glass UI kit**, a full "liquid glass" component SDK written in sandbox JS on top of the Blinc builders (see below). |
-| **`miniapps/`** | Example Miniapps written in JS (`counter`, `showcase`, `glass-gallery`). |
+| **`sdk/`** | **`glass-ui-kit.js`** — the **Glass UI kit**, a full "liquid glass" component SDK written in sandbox JS on top of the Blinc builders (see below). **`material-ui-kit.js`** — the **Material UI kit**, a Flutter-faithful Material Design 3 SDK built as a real widget class hierarchy (see below). |
+| **`miniapps/`** | Example Miniapps written in JS (`counter`, `showcase`, `glass-gallery`, `material-gallery`). |
 
 ## How the bridge works
 
@@ -179,6 +179,93 @@ The kit drove a few additions to Elpis itself:
   `withKey`/`withStyle`/`bindEvents`/`withAnim`/`withTransition`.
 - **Host binary** — `--lib FILE` (repeatable) to compose a Miniapp from
   reusable SDK sources, the sandbox-friendly substitute for `import`.
+
+## The Material UI kit (`sdk/material-ui-kit.js`)
+
+A faithful **Material Design 3 / Flutter `material` library** SDK, independent
+of the Glass kit and built the opposite way: a genuine **object hierarchy**
+mirroring Flutter's own widget classes (`Widget` -> `StatelessWidget` /
+`StatefulWidget`, `build()` returning the render tree) rather than bare
+factory functions, using the engine's real `class`/`extends`/`super`. Flutter's
+public widget API — constructor properties, shapes, elevations, the type
+scale, motion tokens — is reproduced from the Material 3 spec as closely as
+the protocol's style/animation surface allows. It defines one global,
+`Material`, exposing both the classes (`Material.ElevatedButton`, `Material.
+Card`, …) and a lowercase factory wrapper per class (`Material.elevatedButton`,
+`Material.card`, …):
+
+- **Foundation** — `ColorScheme.fromSeed`/`.light`/`.dark` (Material You
+  dynamic color: five HSL tonal palettes sampled at the M3 tone-role table),
+  `TextTheme`/the M3 type scale, `ThemeData`, `Material.elevation`/`shape`/
+  `motion` design tokens, `Material.colors` (the classic named swatches),
+  `Material.icon` (Material icon names best-effort mapped onto the engine's
+  Tabler set).
+- **Core OOP** — `Widget`/`StatelessWidget`/`StatefulWidget`/`State`, plus
+  `Material.runApp`/`State.setState` wiring a `Theme.of`/`setState`-shaped
+  reactive loop on top of the engine's render-tree-diffing model.
+- **Layout** — `Container`, `SizedBox`, `Center`, `Align`, `Padding`,
+  `Expanded`/`Flexible`, `Spacer`, `Wrap`, `Row`/`Column`, `Stack`/`Positioned`,
+  `ListView`(`.builder`/`.separated`), `GridView`(`.count`/`.builder`),
+  `SingleChildScrollView`, `Divider`/`VerticalDivider`.
+- **Surfaces** — `Card` (elevated/filled/outlined), `Scaffold`, `AppBar`,
+  `BottomAppBar`.
+- **Buttons** — `ElevatedButton`/`FilledButton`(`.tonal`)/`OutlinedButton`/
+  `TextButton`, `IconButton`(`.filled`/`.filledTonal`/`.outlined`),
+  `FloatingActionButton`(`.small`/`.large`/`.extended`), `ToggleButtons`,
+  `SegmentedButton`, `DropdownButton`, `PopupMenuButton`.
+- **Selection & input** — `Checkbox`/`CheckboxListTile`, `Radio<T>`/
+  `RadioListTile` (Flutter's own `value`/`groupValue` API), `Switch`/
+  `SwitchListTile`, `Slider`/`RangeSlider`, `TextField`/`TextFormField`.
+- **Chips** — `Chip`/`InputChip`/`ChoiceChip`/`FilterChip`/`ActionChip`.
+- **Indicators** — `LinearProgressIndicator`/`CircularProgressIndicator`,
+  `Badge`, `Tooltip`.
+- **Dialogs & overlays** — `AlertDialog`, `SimpleDialog`, `Dialog`,
+  `showDialog`, `BottomSheetWidget`/`showModalBottomSheet`, `SnackBar`.
+- **Navigation** — `BottomNavigationBar`, `NavigationBar`, `NavigationRail`,
+  `Drawer`/`NavigationDrawer`, `TabBar`/`TabBarView`, `Stepper`.
+- **Lists & data** — `ListTile`, `ExpansionTile`/`ExpansionPanelList`,
+  `DataTable`.
+- **Text & media** — `Text` (type-scale aware), `CircleAvatar`, `Image`.
+
+```js
+function view() {
+  return Material.scaffold({
+    appBar: Material.appBar({ title: "Inbox" }),
+    body: Material.card({ children: [
+      Material.text({ text: "Welcome", variant: "headlineSmall" }),
+      Material.filledButton({ label: "Continue", onClick: "go" })
+    ] })
+  });
+}
+render(view());
+```
+
+Every class is also a bare top-level identifier (`ElevatedButton`, `Card`,
+`Widget`, `State`, …), not just a `Material.*` property, because the engine's
+`class X extends Y` only parses a plain identifier after `extends` — so
+subclassing anything (a custom `StatefulWidget`/`State`, a specialized button)
+extends the bare name, e.g. `class CounterState extends State { … }`. Prefer
+`Material.*` for everyday calls; reserve the bare names for `extends`.
+
+```bash
+cargo run --bin elpis -- --lib sdk/material-ui-kit.js miniapps/material-gallery/app.js
+cargo run --bin elpis -- --lib sdk/material-ui-kit.js miniapps/material-gallery/app.js --event nav:2
+```
+
+### A note on fidelity vs. the engine
+
+Elpis's native `checkbox`/`switch`/`radio`/`slider` widgets carry a fixed,
+host-side appearance the guest can't recolor (the protocol's `ToggleSpec`/
+`RadioSpec`/`SliderSpec` don't carry paint fields). Since exact Material color
+and shape fidelity is the point of this kit, `Checkbox`/`Switch`/`Radio` are
+reimplemented from scratch as plain divs + icons with click handlers (they're
+simple tap targets in Material, not drags, so nothing is lost); `Slider`/
+`TextField`/`DropdownButton` genuinely need native drag/caret handling the
+sandbox can't reimplement, so those wrap the native widgets and layer Material
+decoration around them. There's likewise no continuous pointer-tracking seam
+for a true animated ink ripple; `Material._ink` fakes one by mounting a
+freshly-keyed decorative circle (via a host-supplied `pulse` value) whose
+mount-triggered scale+fade animation approximates `InkWell`.
 
 ## Running
 

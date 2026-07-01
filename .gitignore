@@ -4,6 +4,7 @@ Cargo.lock.bak
 
 # Web demo build output (wasm-pack).
 /apps/elpis-web/pkg
+/apps/elpis-web/pkg-material
 /_site
 
 # Android demo build output.

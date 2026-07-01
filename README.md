@@ -328,50 +328,61 @@ headless default path needs none of this.
 
 ## Demos: desktop, web, and Android
 
-The web demo (`apps/elpis-web`) boots the **Glass UI kit gallery** — it prepends
-`sdk/glass-ui-kit.js` to `miniapps/glass-gallery/app.js` (the same composition
-`elpis --lib` performs) and renders it to a WebGPU canvas. The live Blinc
-backend honors the kit's full surface: `full`/`auto`/`fit` sizing,
-absolute/fixed/relative positioning with insets, and **real `backdrop_blur`
-glass** (a `GlassMaterial` lowers to a tinted background + rim + `backdrop_blur`
-the backend applies via Blinc's frosted-glass path).
+Both UI kits ship a runnable gallery, and both the web and Android demo
+targets bundle **both** — a Cargo feature (`material_demo`, off by default)
+picks which one a given build embeds, so the same two crates produce four
+artifacts total (glass/material × web/Android). The live Blinc backend honors
+each kit's full surface: `full`/`auto`/`fit` sizing, absolute/fixed/relative
+positioning with insets, real `backdrop_blur` glass for the Glass kit
+(`GlassMaterial` lowers to a tinted background + rim + `backdrop_blur`), and
+the Material kit's shapes/elevation shadows/type scale.
 
 The same Elpis sandbox + bridge + `Node → Blinc` lowering drives three platform
 targets; only the run loop differs (each demo crate supplies its own `blinc_app`
-platform feature and calls the shared `elpis_blinc::frame_closure`). The **web**
-and **Android** demos boot the **liquid glass gallery** (`miniapps/glass-gallery`,
-driven by the Glass UI kit `sdk/glass-ui-kit.js`) — the kit is bundled ahead of
-the Miniapp at compile time (`concat!` over `include_str!`), the same prelude +
+platform feature and calls the shared `elpis_blinc::frame_closure`). For web
+and Android, the chosen gallery's kit is bundled ahead of the Miniapp at
+compile time (`concat!`/`format!` over `include_str!`) — the same prelude +
 kit + app composition the host binary's `--lib` produces:
 
 | Target | Crate | Run loop | Status |
 |--------|-------|----------|--------|
-| Desktop | `apps/elpis-app` (`--features blinc`) | `WindowedApp::run` | compiles against blinc 0.5.1 |
-| Web (wasm) | `apps/elpis-web` | `WebApp::run` (WebGPU canvas) | **compiles for `wasm32-unknown-unknown`** |
-| Android | `apps/elpis-android` | `AndroidApp::run` (NativeActivity) | built in CI via `cargo-ndk` + Gradle |
+| Desktop | `apps/elpis-app` (`--features blinc`) | `WindowedApp::run` | compiles against blinc 0.5.1; `--lib sdk/<kit>.js` picks the kit |
+| Web (wasm) | `apps/elpis-web` | `WebApp::run` (WebGPU canvas) | **compiles for `wasm32-unknown-unknown`**; `--features material_demo` picks the kit |
+| Android | `apps/elpis-android` | `AndroidApp::run` (NativeActivity) | built in CI via `cargo-ndk` + Gradle; `--features material_demo` picks the kit |
 
 ### GitHub workflows
 
-* **`.github/workflows/web.yml`** — builds `apps/elpis-web` with `wasm-pack`,
-  assembles a static site (`index.html` + `pkg/`), and deploys it to **GitHub
-  Pages**. One-time setup: repo *Settings → Pages → Source: GitHub Actions*.
-  The demo then lives at `https://<owner>.github.io/<repo>/`.
+* **`.github/workflows/web.yml`** — builds `apps/elpis-web` with `wasm-pack`
+  **twice** (default features → `pkg/`, `--features material_demo` →
+  `pkg-material/`), assembles a static site (`index.html` + `pkg/` for the
+  glass demo, `material.html` + `pkg-material/` for the Material demo, each
+  page links to the other), and deploys it to **GitHub Pages**. One-time
+  setup: repo *Settings → Pages → Source: GitHub Actions*. The demos then live
+  at `https://<owner>.github.io/<repo>/` (glass) and
+  `https://<owner>.github.io/<repo>/material.html` (Material).
 
-* **`.github/workflows/android.yml`** — cross-compiles `apps/elpis-android` to an
-  `arm64-v8a` `.so` with `cargo-ndk`, packages it into a debug APK with the
-  Gradle project under `apps/elpis-android/android/`, and **commits the APK to
-  the repository root** as `elpis-demo.apk` (also uploaded as a build artifact).
+* **`.github/workflows/android.yml`** — cross-compiles `apps/elpis-android` to
+  an `arm64-v8a` `.so` with `cargo-ndk` **twice** (default features, then
+  `--features material_demo`), packages each into a debug APK with the Gradle
+  project under `apps/elpis-android/android/` (a `-PdemoVariant=glass|material`
+  project property gives the two builds distinct `applicationId`s —
+  `org.cosmopole.elpis` / `org.cosmopole.elpis.material` — and labels, so both
+  install side by side on the same device), and **commits both APKs to the
+  repository root** as `elpis-demo.apk` (glass) and `elpis-demo-material.apk`
+  (Material) — also uploaded as build artifacts.
 
 Both also run on `workflow_dispatch`. They trigger on pushes to `main`, so they
-take effect once this branch is merged to the default branch.
+take effect once this branch is merged to the default branch (or run either
+one manually from the Actions tab against this branch to try both demos now).
 
-Build the web demo locally:
+Build a web demo locally (swap the two commands for the Material demo):
 
 ```bash
 rustup target add wasm32-unknown-unknown
 cargo install wasm-pack
-wasm-pack build apps/elpis-web --target web --release --out-dir pkg
-python3 -m http.server -d apps/elpis-web   # then open http://localhost:8000
+wasm-pack build apps/elpis-web --target web --release --out-dir pkg               # glass demo
+wasm-pack build apps/elpis-web --target web --release --out-dir pkg-material --features material_demo   # material demo
+python3 -m http.server -d apps/elpis-web   # then open http://localhost:8000/ (glass) or /material.html
 ```
 
 ## Sandboxing

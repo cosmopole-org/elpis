@@ -1,14 +1,20 @@
 //! Web (wasm32) entry point for the Elpis demo.
 //!
-//! Boots the bundled **Glass UI kit gallery** Miniapp inside an Elpis sandbox
-//! whose backend is a Blinc [`BlincBackend`], then hands Blinc's `WebApp` the
-//! shared frame closure so the UI renders to a WebGPU `<canvas>` in the
-//! browser. This is the exact same sandbox + bridge + lowering used by the
-//! desktop and Android builds — only the platform run loop differs.
+//! Boots a bundled Miniapp gallery inside an Elpis sandbox whose backend is a
+//! Blinc [`BlincBackend`], then hands Blinc's `WebApp` the shared frame
+//! closure so the UI renders to a WebGPU `<canvas>` in the browser. This is
+//! the exact same sandbox + bridge + lowering used by the desktop and Android
+//! builds — only the platform run loop differs.
 //!
-//! The gallery is built on the Glass UI kit SDK (`sdk/glass-ui-kit.js`); since
-//! the sandbox denies runtime module import, the kit source is **prepended** to
-//! the Miniapp here (the same composition the host binary does with `--lib`).
+//! By default this bundles the **liquid glass** gallery (`sdk/glass-ui-kit.js`
+//! + `miniapps/glass-gallery`); building with `--features material_demo`
+//! bundles the **Material Design 3** gallery instead (`sdk/material-ui-kit.js`
+//! + `miniapps/material-gallery`). Since the sandbox denies runtime module
+//! import, the kit source is **prepended** to the Miniapp here (the same
+//! composition the host binary does with `--lib`). The GitHub Pages workflow
+//! (`.github/workflows/web.yml`) builds both — into `pkg/` (glass, served by
+//! `index.html`) and `pkg-material/` (material, served by `material.html`) —
+//! so both demos are reachable from the deployed site.
 //!
 //! Build with `wasm-pack build --target web --release` and serve the directory
 //! (the GitHub Pages workflow does this). The page must provide a
@@ -19,10 +25,22 @@ use wasm_bindgen::prelude::*;
 
 use elpis_blinc::{BlincBackend, Sandbox, SandboxConfig, SurfaceInfo};
 
-/// The Glass UI kit SDK + the gallery Miniapp, bundled into the wasm artifact.
-/// The kit is prepended to the app (module import is denied in the sandbox).
-const GLASS_KIT: &str = include_str!("../../../sdk/glass-ui-kit.js");
+/// The UI kit SDK + the gallery Miniapp, bundled into the wasm artifact. The
+/// kit is prepended to the app (module import is denied in the sandbox).
+#[cfg(not(feature = "material_demo"))]
+const KIT: &str = include_str!("../../../sdk/glass-ui-kit.js");
+#[cfg(not(feature = "material_demo"))]
 const GALLERY: &str = include_str!("../../../miniapps/glass-gallery/app.js");
+
+#[cfg(feature = "material_demo")]
+const KIT: &str = include_str!("../../../sdk/material-ui-kit.js");
+#[cfg(feature = "material_demo")]
+const GALLERY: &str = include_str!("../../../miniapps/material-gallery/app.js");
+
+#[cfg(not(feature = "material_demo"))]
+const DEMO_NAME: &str = "Glass UI kit gallery";
+#[cfg(feature = "material_demo")]
+const DEMO_NAME: &str = "Material UI kit gallery";
 
 /// Fonts bundled so text shapes in the browser (browsers don't expose system
 /// fonts to the WebGPU pipeline). DejaVu Sans is the **sans-serif** family the
@@ -39,7 +57,7 @@ const CANVAS_ID: &str = "elpis-canvas";
 #[wasm_bindgen(start)]
 pub fn start() {
     console_error_panic_hook::set_once();
-    web_sys::console::log_1(&"elpis-web: booting Glass UI kit gallery".into());
+    web_sys::console::log_1(&format!("elpis-web: booting {DEMO_NAME}").into());
 
     wasm_bindgen_futures::spawn_local(async {
         if let Err(e) = run().await {
@@ -55,7 +73,7 @@ async fn run() -> Result<(), String> {
     let (backend, shared) = BlincBackend::new(surface);
     let config = SandboxConfig { surface: Some(surface), ..SandboxConfig::new("elpis-web") };
 
-    let source = format!("{GLASS_KIT}\n// ---- gallery ----\n{GALLERY}");
+    let source = format!("{KIT}\n// ---- gallery ----\n{GALLERY}");
     let mut sandbox = Sandbox::from_js(config, &source, Box::new(backend))?;
     sandbox.boot()?;
 

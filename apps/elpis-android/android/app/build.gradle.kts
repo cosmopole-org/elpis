@@ -2,6 +2,18 @@ plugins {
     id("com.android.application")
 }
 
+// Which Miniapp gallery this build embeds: "glass" (default) or "material".
+// The workflow (`.github/workflows/android.yml`) invokes Gradle twice —
+// `-PdemoVariant=glass` and `-PdemoVariant=material` — against two different
+// `libelpis_android.so` builds (built with/without `--features
+// material_demo`, see `apps/elpis-android/src/lib.rs`) so it can produce two
+// separately-installable APKs (distinct `applicationId` + label) from the
+// same unmodified `assembleDebug`/`assembleRelease` tasks, rather than a
+// second Gradle product-flavor dimension.
+val demoVariant = (project.findProperty("demoVariant") as String?) ?: "glass"
+val demoIdSuffix = if (demoVariant == "material") ".material" else ""
+val demoLabel = if (demoVariant == "material") "Elpis Demo (Material)" else "Elpis Demo (Glass)"
+
 android {
     namespace = "org.cosmopole.elpis"
     // compileSdk 35 (Android 15) gives the headers + automatic 16 KB-page
@@ -9,11 +21,13 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "org.cosmopole.elpis"
+        applicationId = "org.cosmopole.elpis$demoIdSuffix"
         minSdk = 24
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
+        // Substitutes `${appLabel}` in AndroidManifest.xml's `android:label`.
+        manifestPlaceholders["appLabel"] = demoLabel
 
         ndk {
             // The CI builds the Rust .so for arm64-v8a; add more ABIs here if
